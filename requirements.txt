@@ -6,6 +6,7 @@ nexinfosys==0.44
 # tableschema (de frictionless)
 datapackage==1.15.1
 
+blosc>=1.10.2
 pronto>=2.3.1
 appdirs==1.4.3
 pyyaml==5.3.1
