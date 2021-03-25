@@ -1,5 +1,7 @@
 import tempfile
 import os
+from abc import ABC
+
 import calliope
 import pandas as pd
 from typing import Dict, List, Tuple
@@ -30,8 +32,25 @@ class LCIIndex:
         pass
 
 
-class Simulation:
+class Simulation(ABC):
     """ Abstract simulation reader (the implementation will depend on the type of simulator used) """
+    def read(self, simulation_files_path: str):
+        """ Read"""
+        pass
+
+    def blocks(self):
+        """ An iterator into the blocks (technologies) in the simulation """
+        pass
+
+    def block_information(self, block_name):
+        """ Return information for block """
+        pass
+
+
+class SentinelSimulation(Simulation):
+    def __init__(self, simulation_files_path):
+        pass
+
     def read(self, simulation_files_path: str):
         """ Read"""
         pass
@@ -52,6 +71,50 @@ class CalliopeSimulation(Simulation):
 
     def read(self, simulation_files_path: str):
         self._model = calliope.Model(simulation_files_path)
+        ds = self._model.inputs
+        # Carriers -> InterfaceTypes
+        carriers = dict()
+        for i in ds.carriers:
+            s = str(i.values)
+            carriers[s] = dict()
+
+        # Locations -> GeographicalReferences
+        locations = dict()
+        for i in ds.locs:
+            s = str(i.values)
+            locations[s] = [ds.loc_coordinates.sel(coordinates=gc, locs=s) for gc in ["lat", "lon"]]
+        # Technologies -> Processors (Archetype)
+        techs = dict()  # TODO: is Transmission, is Conversion, type
+        for i in ds.techs:
+            s = str(i.values)
+            ttype = None
+            techs[s] = dict(tech_type=ttype)
+
+        # Technologies at locations -> Processors (Instances) (need to clone Archetypes? seems no)
+        # - Type
+        # - Efficiency
+        # - Land Use
+        # - Power Capacity
+        techs_locs = dict()
+        for i in ds.loc_techs:
+            location, tech = str(i.values).split("::")
+            techs_locs[f"{location}__{tech}"] = dict(loc=location, tech=tech)
+        print("hola")
+
+        # Transmission are technologies -> Processors, ¿allocated to two locations? ¿proportion 50/50?
+        links = dict()
+        for i in ds.loc_techs_transmission:
+            print(i)
+
+        # TODO
+        #  * Read locations (and geographical coordinates)
+        #  * Read techs (and general features)
+        #  * Read pairs location-tech (and particular features)
+        #  * Reading features may imply (or not) going through input CSV files
+
+        # TODO f"{tech}_at_{loc}" -> processor: where? lat, long?
+
+        # TODO Can Calliope read the output of the optimization? or is it necessary to read separately...
 
     def blocks(self):
         """ List of technologies """
@@ -358,6 +421,10 @@ def merge_models(nis: NIS, matcher: Matcher, simulation: Simulation, lci_data_in
             for activity_flow in lci_activity.flows:
                 # TODO Name, value, unit, input/output, time, location, source, etc.
                 block_info.update()
+                # TODO Take note of "Impact Category" (analysis) -> Attribute "@ImpactCategory"
+
+        # TODO Read "LCIA method" -> Schema of SUM (exchanges*weight) per Impact Category
+
         # TODO Convert input information into NIS InterfaceTypes (including change of scale?)
         block_info = matcher.convert_to_interface_types(block_info)
         # Matching MuSIASEM processors
@@ -417,6 +484,11 @@ def enviro_musiasem(cfg_file_path):
     # TODO Download outputs, elaborate indicators, write indicator files
 
     # os.remove(temp_name)
+
+
+model = CalliopeSimulation("/home/rnebot/GoogleDrive/AA_SENTINEL/calliope_tests/Calliope-Kenya/model.yaml")
+
+# model1 = calliope.examples.national_scale()
 
 
 enviro_musiasem("../../example_config.yaml")
