@@ -1,6 +1,6 @@
 nis_file_location: "https://docs.google.com/spreadsheets/d/12AlJ0tdu2b-cfalNzLqFYfiC-hdDlIv1M1pTE3AfSWY/edit#gid=1986791705"
 correspondence_files_path: ""
-simulation_type: calliope
+simulation_type: sentinel
 simulation_files_path: ""
 lci_data_locations:
   - ""

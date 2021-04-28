@@ -128,3 +128,7 @@ dmypy.json
 
 # Pyre type checker
 .pyre/
+
+/enbios/data/5c5c2277-8df1-4a73-a479-9c14deec9bb1.spold
+/enbios/data/Electricity, PV, production mix.spold
+/enbios/data/Electricity, PV, 3kWp, multi-Si.spold
