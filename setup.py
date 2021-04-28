@@ -31,7 +31,7 @@ from pkg_resources import yield_lines
 # from Cython.Distutils import build_ext
 
 package_name = 'enbios'
-version = '0.4'
+version = '0.6'
 
 
 def parse_requirements(strs):
