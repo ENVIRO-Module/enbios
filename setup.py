@@ -19,23 +19,19 @@
 #
 # INSTALL   ------------------------------------------------------------------------------
 #
-# PyPI test: pip install --index-url https://test.pypi.org/simple/ --upgrade envirorg
-# PyPI     : pip install --upgrade envirorg
+# PyPI test: pip install --index-url https://test.pypi.org/simple/ --upgrade enbios
+# PyPI     : pip install --upgrade enbios
 # No PyPI  : pip install -e <local path where "setup.py" (this file) is located>
 #
-# EXECUTE (example. "gunicorn" must be installed: "pip install gunicorn")
-# (IT WORKS WITH ONLY 1 WORKER!!!)
-# gunicorn --workers=1 --log-level=debug --timeout=2000 --bind 0.0.0.0:8081 biobarcoding.rest.main:app
-#
+from os import path
 from setuptools import setup
 from pkg_resources import yield_lines
 # from distutils.extension import Extension
-from Cython.Build import cythonize
+# from Cython.Build import cythonize
 # from Cython.Distutils import build_ext
 
-# "enviro" name is taken, so "envirosa" for "ENVIROnment and Social Sustainability Assessment"
-package_name = 'envirossa'
-version = '0.1'
+package_name = 'enbios'
+version = '0.4'
 
 
 def parse_requirements(strs):
@@ -69,21 +65,23 @@ with open('requirements.txt') as f:
 install_reqs = parse_requirements(required)
 print(install_reqs)
 
+this_directory = path.abspath(path.dirname(__file__))
+with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
+    long_description = f.read()
+
 
 setup(
     name=package_name,
     version=version,
     install_requires=install_reqs,
-    packages=['envirorg', 'envirorg.common', 'envirorg.models',
-              'biobarcoding.io',
-              'biobarcoding.authentication', 'biobarcoding.authorization', 'biobarcoding.services',
-              'biobarcoding.rest'],
+    packages=['enbios', 'enbios.common', 'enbios.model',
+              'enbios.input', 'enbios.output', 'enbios.processing'],
     include_package_data=True,
-    # cmdclass={'build_ext': build_ext},
-    # ext_modules=cythonize(["biobarcoding/common/helper_accel.pyx"], language_level="3"),
-    url='https://github.com/nextgendem/bcs-backend',
-    license='',
-    author='rnebot',
+    url='https://github.com/ENVIRO-Module/enviro',
+    license='MIT',
+    author=['Rafael Nebot', 'Cristina Madrid'],
     author_email='rnebot@itccanarias.org',
-    description='Organism bar-coding system backend'
+    long_description=long_description,
+    long_description_content_type='text/markdown',
+    description='Indicators of environmental sustainability of energy systems using MuSIASEM and LCA methodologies'
 )

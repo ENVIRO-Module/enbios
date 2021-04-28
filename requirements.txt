@@ -1,16 +1,11 @@
-calliope==0.6.6.post1
 brightway2==2.3
-nexinfosys==0.44
-
+nexinfosys>=0.46
+friendly-data>=0.1.dev1
+friendly-data-registry>=20210406
 # frictionless (formerly "goodtables")
 # tableschema (de frictionless)
-datapackage==1.15.1
-
-blosc>=1.10.2
-pronto>=2.3.1
-appdirs==1.4.3
+datapackage>=1.15.1
 pyyaml==5.3.1
-geojson>=2.4.1
 nbformat>=5.0.7
 typing>=3.7.4.1
 attrs>=19.3.0
@@ -18,13 +13,19 @@ requests==2.21.0  # 2.25.0
 requests_cache==0.4.13
 pyparsing>=2.2.0
 numpy>=1.18.5
-# openpyxl==2.4.8  #
-pandas==1.1.5
+pandas>=1.1.5
 pandas_datareader>=0.8.1
-anytree>=2.8.0
-networkx==2.4
-multidict>=4.7.3
-xmltodict>=0.12.0
-xlrd==1.1.0  # 1.2.0
-jsonpickle==1.2
-dotted>=0.1.8 # <- Dotted notation: !!Fantastic!!
+xlrd>=1.1.0  # 1.2.0
+jsonpickle>=1.2
+# calliope==0.6.6.post1
+# blosc>=1.10.2
+# cirpy>=1.0.2
+# pronto>=2.3.1
+# appdirs==1.4.3
+# geojson>=2.4.1
+# openpyxl==2.4.8  #
+# anytree>=2.8.0
+# networkx==2.4
+# multidict>=4.7.3
+# xmltodict>=0.12.0
+# dotted>=0.1.8 # <- Dotted notation: !!Fantastic!!
