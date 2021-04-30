@@ -7,15 +7,24 @@ obtain either a MuSIASEM or LCA structure
 from typing import Dict
 
 from enbios.input import Simulation
+from friendly_data.dpkg import read_pkg
+from friendly_data.converters import to_df
 
 
 class SentinelSimulation(Simulation):
     def __init__(self, sentinel_index_path):
-        self._sentinel_index = sentinel_index_path
+        self._sentinel_index_path = sentinel_index_path
+        self._blocks = {}
+        self.read()
 
-    def read(self, simulation_files_path: str):
+    def read(self):
         """ Read variables and datasets """
-        pass
+        pkg = read_pkg(self._sentinel_index_path)
+        lst = []
+        for r in pkg.resources:
+            df = to_df(r)
+            lst.append(df)
+        print(pkg)
 
     def blocks(self):
         """ An iterator into the blocks (technologies) in the simulation """

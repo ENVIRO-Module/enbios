@@ -1,6 +1,9 @@
+from abc import ABC
+
+
 class Simulation(ABC):
     """ Abstract simulation reader (the implementation will depend on the type of simulator used) """
-    def read(self, simulation_files_path: str):
+    def read(self):
         """ Read"""
         pass
 

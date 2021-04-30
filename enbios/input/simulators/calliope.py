@@ -17,6 +17,8 @@ import calliope
 from typing import List
 import yaml
 
+from enbios.input import Simulation
+
 
 def read_calliope_model(model_file: str, outputs: str) -> List[nx.DiGraph]:
     """
@@ -47,10 +49,11 @@ def map_calliope_to_available(calliope: nx.DiGraph, technologies):
 class CalliopeSimulation(Simulation):
     def __init__(self, simulation_files_path):
         self._model = None
-        self.read(simulation_files_path)
+        self._simulation_files_path = simulation_files_path
+        self.read()
 
-    def read(self, simulation_files_path: str):
-        self._model = calliope.Model(simulation_files_path)
+    def read(self):
+        self._model = calliope.Model(self._simulation_files_path)
         ds = self._model.inputs
         # Carriers -> InterfaceTypes
         carriers = dict()
