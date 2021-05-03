@@ -4,7 +4,9 @@ import pandas as pd
 from typing import Tuple
 
 from nexinfosys.embedded_nis import NIS
+from openpyxl.writer.excel import save_virtual_workbook
 
+from enbios.common.helper import generate_workbook
 from enbios.input import Simulation
 from enbios.input.data.lci import LCIIndex
 from enbios.input.simulators.calliope import CalliopeSimulation
@@ -33,6 +35,10 @@ class Enviro:
             simulation = CalliopeSimulation(self._cfg["simulation_files_path"])
         elif self._cfg["simulation_type"].lower() == "sentinel":
             simulation = SentinelSimulation(self._cfg["simulation_files_path"])
+            t = simulation.generate_template_data()
+            s = generate_workbook(t)
+            with open("/home/rnebot/Downloads/test.xlsx", "wb") as f:
+                f.write(s)
         # MuSIASEM (NIS)
         nis = read_prepare_nis_file(self._cfg["nis_file_location"])
         # LCI index
@@ -50,6 +56,7 @@ class Enviro:
         """
         # Construct auxiliary models
         nis, lci_data_index, simulation = self._prepare_process()
+        t = simulation.generate_template_data()
 
         # TODO Build a DataFrame with a list of LCI title, to file code
         #   name,title,file
@@ -112,7 +119,5 @@ _ = dict(nis_file_location="https://docs.google.com/spreadsheets/d/12AlJ0tdu2b-c
 t.set_cfg_file_path(_)
 d1, d2, d3, d4 = t.generate_matcher_templates()
 print("Hola")
-
-# model = CalliopeSimulation("/home/rnebot/GoogleDrive/AA_SENTINEL/calliope_tests/Calliope-Kenya/model.yaml")
 
 
