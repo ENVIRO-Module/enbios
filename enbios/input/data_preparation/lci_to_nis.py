@@ -1,0 +1,221 @@
+"""
+A script to read a list of .spold files and obtain a NIS file with the following commands
+
+* InterfaceTypes
+* BareProcessors
+* Interfaces
+
+"""
+import logging
+import os
+
+import math
+import xlrd
+from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
+from nexinfosys.common.helper import download_file
+from io import StringIO
+import pandas as pd
+from bw2io.importers.ecospold2 import Ecospold2DataExtractor
+from enbios.common.helper import list_to_dataframe, generate_json, generate_workbook
+
+
+def generate_csv(o):
+    js = generate_json(o)
+    df = pd.read_json(js)
+    del df["activity"]
+    del df["classifications"]
+    del df["properties"]
+    del df["loc"]
+    del df["production volume"]
+    del df["uncertainty type"]
+    del df["amount"]  # We are generating a reference of Interface Types. Not specific to a particular Activity
+    # TODO There are many duplicate "name"s, for now remove them
+    df.drop_duplicates(subset=["name"], inplace=True)
+    s = StringIO()
+    s.write('# To regenerate this file, execute function "generate_csv" in script "read_lci_data (ENVIRO)"\n')
+    df.to_csv(s, index=False)
+    return s.getvalue()
+
+
+def read_ecospold_file(f):
+    if os.path.exists(f) and os.path.isfile(f):
+        return Ecospold2DataExtractor.extract(f, "test", use_mp=False)
+    else:
+        return None
+
+
+def lci_to_interfaces_csv(lci_file, csv_file):
+    lci_tmp = read_ecospold_file(lci_file)
+    s = generate_csv(lci_tmp[0]["exchanges"])
+    with open(csv_file, "wt") as f:
+        f.write(s)
+
+"""
+lci_tmp = read_ecospold_file("/home/rnebot/Downloads/Electricity, PV, 3kWp, multi-Si.spold")
+lci_tmp = read_ecospold_file("/home/rnebot/Downloads/Electricity, PV, production mix.spold")
+lci_tmp = read_ecospold_file("/home/rnebot/Downloads/5c5c2277-8df1-4a73-a479-9c14deec9bb1.spold")
+s = generate_json(lci_tmp[0]["exchanges"])
+with open("/home/rnebot/Downloads/exchanges.json.txt", "wt") as f:
+    f.write(s)
+s = generate_csv(lci_tmp[0]["exchanges"])
+with open("/home/rnebot/Downloads/exchanges.csv", "wt") as f:
+    f.write(s)
+
+"""
+
+
+class SpoldToNIS:
+    def __init__(self):
+        pass
+
+    def _get_spold_files_from_correspondence_file(self, correspondence_path):
+        df = pd.read_csv(correspondence_path, comment="#")
+        # Assume all columns are present: "name", "match_target_type", "match_target", "weight", "match_conditions"
+        spolds = []
+        ecoinvent_filename_idx = None
+        type_idx = None
+        name_idx = None
+        for idx, col in enumerate(df.columns):
+            if col.lower() == "match_target":
+                ecoinvent_filename_idx = idx
+            elif col.lower() == "match_target_type":
+                type_idx = idx
+            elif col.lower() == "name":
+                name_idx = idx
+        if ecoinvent_filename_idx is not None and type_idx is not None and name_idx is not None:
+            for idx, r in df.iterrows():
+                ecoinvent_filename = r[df.columns[ecoinvent_filename_idx]]
+                o_type = r[df.columns[type_idx]]
+                name = r[df.columns[name_idx]]
+                if ecoinvent_filename != "" and o_type != "" and name != "":
+                    if o_type.lower() in ["lca", "lci"]:
+                        spolds.append(dict(name=name, ecoinvent_filename=ecoinvent_filename))
+        return spolds
+
+    def _get_spold_files_from_nis_file(self, nis_url):
+        bytes_io = download_file(nis_url)
+        xl = pd.ExcelFile(xlrd.open_workbook(file_contents=bytes_io.getvalue()), engine="xlrd")
+        spolds = []
+        for sheet_name in xl.sheet_names:
+            if not sheet_name.lower().startswith("bareprocessors"):
+                continue
+            df = xl.parse(sheet_name, header=0)
+            ecoinvent_filename_idx = None
+            ecoinvent_name_idx = None
+            name_idx = None
+            for idx, col in enumerate(df.columns):
+                if col.lower() == "@ecoinventfilename":
+                    ecoinvent_filename_idx = idx
+                elif col.lower() == "@ecoinventname":
+                    ecoinvent_name_idx = idx
+                elif col.lower() == "processor":
+                    name_idx = idx
+            if ecoinvent_filename_idx is not None and ecoinvent_name_idx is not None and name_idx is not None:
+                for idx, r in df.iterrows():
+                    ecoinvent_filename = r[df.columns[ecoinvent_filename_idx]]
+                    ecoinvent_name = r[df.columns[ecoinvent_name_idx]]
+                    name = r[df.columns[name_idx]]
+                    if ecoinvent_filename != "" and not isinstance(ecoinvent_filename, float) and ecoinvent_name != "" and name != "":
+                        spolds.append(dict(name=name, ecoinvent_filename=ecoinvent_filename, ecoinvent_name=ecoinvent_name))
+        return spolds
+
+    def spold2nis(self, lci_base: str, correspondence, nis_base_url: str, output_file: str):
+        """
+        A method to transform Spold files into a Workbook with InterfacesTypes, BareProcessors and Interfaces
+
+        :param lci_base: Local path where .spold files are located
+        :param correspondence: Location of the correspondence file (open "sim_correspondence_example.csv" file)
+        :param nis_base_url: Location of the NIS Base file, which can also have processors with LCI location
+        :param nis_file: Path of the result workbook
+        :return: None
+        """
+
+        # Read the list of Spold files to process
+        spolds = []
+        if correspondence:
+            _ = self._get_spold_files_from_correspondence_file(correspondence)
+            spolds.extend(_)
+        if nis_base_url:
+            _ = self._get_spold_files_from_nis_file(nis_base_url)
+            spolds.extend(_)
+
+        interface_types = {}
+        processors = {}
+        interfaces = {}
+
+        # Process each .spold file
+        for spold in spolds:
+            file_name = f"{lci_base}{os.sep}{spold['ecoinvent_filename']}"
+            lci = read_ecospold_file(file_name)
+            if lci is None:
+                logging.debug(f"Ecospold file '{file_name}' not found")
+                continue
+            lci = lci[0]
+            # Obtain processor name
+            p_name = lci["name"]
+            # Processors
+            processors[get_nis_name(p_name)] = dict(name=p_name, lca_code=lci["activity"],
+                                                    lca_type=lci["activity type"], lca_file=lci["filename"],
+                                                    description=lci["comment"])
+
+            # Read exchanges (to produce InterfaceTypes and Interfaces)
+            df = pd.read_json(generate_json(lci["exchanges"]))
+            del df["activity"]
+            del df["classifications"]
+            del df["properties"]
+            del df["loc"]
+            del df["production volume"]
+            del df["uncertainty type"]
+            dfi = df.copy()
+
+            # Interface Types
+            del dfi["amount"]
+            # There are duplicate "name"s, for now remove them
+            dfi.drop_duplicates(subset=["name"], inplace=True)
+            for idx, r in dfi.iterrows():
+                interface_types[get_nis_name(r["name"])] = dict(comment=r.get("comment", ""), flow=r["flow"], sphere=r["type"], unit=r["unit"], lci_name=r["name"])
+            # Interfaces
+            tmp = df.groupby(['name']).sum()  # Acumulate (sum) repeated exchange names
+            for idx, r in tmp.iterrows():
+                interfaces[(p_name, get_nis_name(idx))] = dict(value=r["amount"])
+
+        # Generate the three commands, InterfaceTypes, BareProcessors, Interfaces
+        cmds = []
+
+        # InterfaceTypes
+        lst = [["InterfaceTypeHierarchy", "InterfaceType", "Sphere", "RoegenType", "ParentInterfaceType", "Formula",
+                "Description", "Unit", "OppositeSubsystemType", "Attributes", "@EcoinventName"]]
+        for interface_type, props in interface_types.items():
+            lst.append(["sentinel", interface_type, props["sphere"], "Flow", "", "",
+                        props["comment"], props["unit"], "<opposite>", "", props["lci_name"]])
+        cmds.append(("InterfaceTypes", list_to_dataframe(lst)))
+
+        # BareProcessors
+        lst = [["ProcessorGroup", "Processor", "ParentProcessor", "SubsystemType", "System", "FunctionalOrStructural",
+                "Accounted", "Stock", "Description", "GeolocationRef", "GeolocationCode", "GeolocationLatLong",
+                "Attributes", "@EcoinventName", "@EcoinventFilename", "@region"]]
+        for processor, props in processors.items():
+            spold_file = props["lca_file"]
+            lst.append(["", processor, "", "", "", "Structural", "No", "", "", "", "", "", "", props["name"], spold_file, ""])
+        cmds.append(("BareProcessors", list_to_dataframe(lst)))
+
+        # Interfaces
+        lst = [
+            ["Processor", "InterfaceType", "Interface", "Sphere", "RoegenType", "Orientation", "OppositeSubsystemType",
+             "GeolocationRef", "GeolocationCode", "InterfaceAttributes", "Value", "Unit", "RelativeTo", "Uncertainty",
+             "Assessment", "PedigreeMatrix", "Pedigree", "Time", "Source", "NumberAttributes", "Comments"]]
+        output_name = "flow_out"
+        for p_i, props in interfaces.items():
+            p_name = get_nis_name(p_i[0])
+            v = props["value"]
+            lst.append([p_name, p_i[1], "", "Technosphere", "Flow", "<orientation>", "", "", "", "", v,
+                        "", output_name, "", "", "", "", "", "Ecoinvent", "", ""])
+        cmds.append(("Interfaces", list_to_dataframe(lst)))
+
+        s = generate_workbook(cmds)
+        if s:
+            with open(output_file, "wb") as f:
+                f.write(s)
+        else:
+            print(f"ACHTUNG BITTE!: it was not possible to produce XLSX, probably because no .Spold file was found, "
+                  f"check LCI data folder, {lci_base}, is correctly specified.")
