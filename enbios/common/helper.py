@@ -44,10 +44,12 @@ def list_to_dataframe(lst: List) -> pd.DataFrame:
 def generate_workbook(cmds):
     # Convert list of pd.DataFrames to Excel workbook
     wb = Workbook(write_only=True)
+    ws_count = 0
     for name, df in cmds:
         if df.shape[0] < 2:
             continue
 
+        ws_count += 1
         ws = wb.create_sheet(name)
         widths = [0]*(df.shape[1]+1)  # A maximum of 100 columns
         max_columns = 0
@@ -65,4 +67,7 @@ def generate_workbook(cmds):
         for r in dataframe_to_rows(df, index=False, header=True):
             ws.append(r)
 
-    return save_virtual_workbook(wb)
+    if ws_count > 0:
+        return save_virtual_workbook(wb)
+    else:
+        return None
