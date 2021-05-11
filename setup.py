@@ -69,18 +69,22 @@ this_directory = path.abspath(path.dirname(__file__))
 with open(path.join(this_directory, 'README.md'), encoding='utf-8') as f:
     long_description = f.read()
 
-
 setup(
     name=package_name,
     version=version,
     install_requires=install_reqs,
-    packages=['enbios', 'enbios.common', 'enbios.model',
-              'enbios.input', 'enbios.output', 'enbios.processing'],
+    packages=['enbios', 'enbios.bin', 'enbios.common', 'enbios.model',
+              'enbios.input', 'enbios.input.data_preparation', 'enbios.input.simulators',
+              'enbios.output',
+              'enbios.processing', 'enbios.processing.indicators'],
     include_package_data=True,
     url='https://github.com/ENVIRO-Module/enviro',
     license='MIT',
     author=['Rafael Nebot', 'Cristina Madrid'],
     author_email='rnebot@itccanarias.org',
+    entry_points = {
+        'console_scripts': ['enbios=enbios.bin.script:main'],
+    },
     long_description=long_description,
     long_description_content_type='text/markdown',
     description='Indicators of environmental sustainability of energy systems using MuSIASEM and LCA methodologies'
