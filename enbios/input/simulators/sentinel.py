@@ -20,16 +20,21 @@ class SentinelSimulation(Simulation):
     def __init__(self, sentinel_index_path):
         self._sentinel_index_path = sentinel_index_path
 
-    def generate_template_data(self):
+    def _read(self, filter_model: str):
         """
-        Produce a set of (tec, country) tuples and a set of (tec, -) tuples
-        to help in producing
-        :return:
+        Reads Sentinel package completely
+
+        :param filter_model: Read only the specified model
+        :return: A tuple with assorted elements, from lists of possible values for dimensions to a registry of Processors
         """
+        if filter_model is None:  # Mandatory
+            return
+
         regions = set()
         scenarios = set()
         times = set()
         techs = set()
+        carriers = set()
         col_types = set()
         ct = set()
         pkg = read_pkg(self._sentinel_index_path)
@@ -38,6 +43,7 @@ class SentinelSimulation(Simulation):
             df = to_df(res)
             col_types.update(df.columns)
             region_idx = df.index.names.index("region") if "region" in df.index.names else -1
+            carrier_idx = df.index.names.index("carrier") if "carrier" in df.index.names else -1
             tech_idx = df.index.names.index("technology") if "technology" in df.index.names else -1
             scenario_idx = df.index.names.index("scenario") if "scenario" in df.index.names else -1
             time_idx = df.index.names.index("year") if "year" in df.index.names else -1
@@ -45,11 +51,14 @@ class SentinelSimulation(Simulation):
                 if not isinstance(idx, tuple):  # When it is not a MultiIndex, Pandas has "idx" to not be a Tuple; workaround: convert into a Tuple of a single element
                     idx = (idx,)
                 region = idx[region_idx] if region_idx >= 0 else None
+                carrier = idx[carrier_idx] if carrier_idx >= 0 else None
                 tech = idx[tech_idx] if tech_idx >= 0 else None
                 scenario = idx[scenario_idx] if scenario_idx >= 0 else None
                 time_ = idx[time_idx] if time_idx >= 0 else None
                 if region:
                     regions.add(region)
+                if carrier:
+                    carriers.add(carrier)
                 if scenario:
                     scenarios.add(scenario)
                 if time_:
@@ -72,6 +81,15 @@ class SentinelSimulation(Simulation):
                 else:
                     raise Exception(f"Found {len(o)} occurrences of ProcessorAttributes: {k}")
                 pa.attrs.update({k: cols[k] for k in df.columns})
+        return prd, scenarios, regions, times, techs, carriers, col_types, ct
+
+    def generate_template_data(self):
+        """
+        Produce a set of (tec, country) tuples and a set of (tec, -) tuples
+        to help in producing "correspondence"
+        :return:
+        """
+        prd, scenarios, regions, times, techs, carriers, col_types, ct = self._read("")
 
         cmds = []
         # Not NIS
@@ -84,6 +102,11 @@ class SentinelSimulation(Simulation):
         for r in regions:
             lst.append([r])
         cmds.append(("Enbios Regions", list_to_dataframe(lst)))
+
+        lst = [["carrier"]]
+        for r in carriers:
+            lst.append([r])
+        cmds.append(("Enbios Carriers", list_to_dataframe(lst)))
 
         lst = [["name", "region", "match_target_type", "match_target", "weight", "match_conditions"]]
         for t in techs:
@@ -174,12 +197,14 @@ class SentinelSimulation(Simulation):
 
         return cmds
 
-    def generate_nis_compatible_processors(self):
+    def generate_nis_models(self, split_by_region=False, split_by_scenario=True, split_by_period=True):
         """
         Produce a set of (tec, country) processors with interface values,
         separated by scenario (NIS observer) and year (NIS time)
         :return:
         """
+
+        # Yield NIS commands and a descriptor of which region
 
     def read(self):
         """ Read variables and datasets """
