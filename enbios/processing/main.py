@@ -4,14 +4,12 @@ import pandas as pd
 from typing import Tuple
 
 from nexinfosys.embedded_nis import NIS
-from openpyxl.writer.excel import save_virtual_workbook
 
-from enbios.common.helper import generate_workbook
 from enbios.input import Simulation
-from enbios.input.data.lci import LCIIndex
+from enbios.input.lci import LCIIndex
 from enbios.input.simulators.calliope import CalliopeSimulation
 from enbios.input.simulators.sentinel import SentinelSimulation
-from enbios.processing import read_parse_configuration, read_prepare_nis_file
+from enbios.processing import read_parse_configuration, read_submit_solve_nis_file
 from enbios.processing.model_merger import Matcher, merge_models
 from enbios.processing.nis_file_generator import generate_workbook_from_list_of_worksheets
 
@@ -35,12 +33,8 @@ class Enviro:
             simulation = CalliopeSimulation(self._cfg["simulation_files_path"])
         elif self._cfg["simulation_type"].lower() == "sentinel":
             simulation = SentinelSimulation(self._cfg["simulation_files_path"])
-            t = simulation.generate_template_data()
-            s = generate_workbook(t)
-            with open("/home/rnebot/Downloads/test.xlsx", "wb") as f:
-                f.write(s)
         # MuSIASEM (NIS)
-        nis = read_prepare_nis_file(self._cfg["nis_file_location"])
+        nis = read_submit_solve_nis_file(self._cfg["nis_file_location"])
         # LCI index
         lci_data_index = LCIIndex(self._cfg["lci_data_locations"])
 
@@ -56,8 +50,6 @@ class Enviro:
         """
         # Construct auxiliary models
         nis, lci_data_index, simulation = self._prepare_process()
-        t = simulation.generate_template_data()
-
         # TODO Build a DataFrame with a list of LCI title, to file code
         #   name,title,file
         lci_df = pd.DataFrame()
@@ -100,7 +92,7 @@ class Enviro:
         generate_workbook_from_list_of_worksheets(temp_name, lst)
 
         # Execute the NIS file
-        nis, issues = read_prepare_nis_file(temp_name)
+        nis, issues = read_submit_solve_nis_file(temp_name)
 
         # TODO Download outputs
         # TODO Elaborate indicators
@@ -108,16 +100,65 @@ class Enviro:
 
         # os.remove(temp_name)
 
+    def prepare_base(self):
+        """
 
-t = Enviro()
-_ = dict(nis_file_location="https://docs.google.com/spreadsheets/d/12AlJ0tdu2b-cfalNzLqFYfiC-hdDlIv1M1pTE3AfSWY/edit#gid=1986791705",
-         correspondence_files_path="",
-         simulation_type="sentinel",
-         simulation_files_path="/home/rnebot/Downloads/borrame/calliope-output/datapackage.json",
-         lci_data_locations={},
-         output_directory="/home/rnebot/Downloads/borrame/enviro-output/")
-t.set_cfg_file_path(_)
-d1, d2, d3, d4 = t.generate_matcher_templates()
-print("Hola")
+        :return:
+        """
+        nis, issues = read_submit_solve_nis_file(self._cfg["nis_file_location"])
+        from nexinfosys.serialization import serialize_state
+        serial_state = serialize_state(nis.get_state())
+        nis.close_session()
+
+        return serial_state
+
+    def _read_simulation_fragments(self):
+        # TODO Read simulation. Find fragments and then start an iteration on them
+        #  Each fragment is made of the "processors" and their "interfaces"
+        #  It is here where basic processors are built. Correspondence file has tech but it could also
+        #  have carrier and region
+        pass
+
+    def compute_indicators_from_base_and_simulation(self):
+        """
+        MAIN entry point of current ENVIRO
+        Previously, a Base NIS must have been prepared, see @prepare_base
+
+        :return:
+        """
+        # Prepare Base
+        serial_state = self.prepare_base()
+        from nexinfosys.serialization import deserialize_state
+
+        # List of InterfaceTypes. No new interface types allowed?
+        for fragment_metadata, fragment in self._read_simulation_fragments():
+            # fragment_metadata: dict with regions, years, scenarios in the fragment
+            # fragment is a list of processors
+            for processor, interfaces in fragment.items():
+                # TODO Find LCI matches, expand interfaces
+
+                # TODO Find MuSIASEM matches
+                # TODO Generate temporary NIS file
+                fragment_file_name = None
+                state = deserialize_state(serial_state)
+                nis = NIS()
+                nis.open_session(True, state)
+                nis.load_workbook(fragment_file_name)
+                r = nis.submit_and_solve()
+                # TODO Obtain indicators matrix
+                # TODO Append to global indicators matrix (this could be done sending results and another process would be in charge of assembling)
+                nis.close_session()
+
+
+# t = Enviro()
+# _ = dict(nis_file_location="https://docs.google.com/spreadsheets/d/12AlJ0tdu2b-cfalNzLqFYfiC-hdDlIv1M1pTE3AfSWY/edit#gid=1986791705",
+#          correspondence_files_path="",
+#          simulation_type="sentinel",
+#          simulation_files_path="/home/rnebot/Downloads/borrame/calliope-output/datapackage.json",
+#          lci_data_locations={},
+#          output_directory="/home/rnebot/Downloads/borrame/enviro-output/")
+# t.set_cfg_file_path(_)
+# d1, d2, d3, d4 = t.generate_matcher_templates()
+# print("Hola")
 
 

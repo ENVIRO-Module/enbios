@@ -2,7 +2,7 @@ import pandas as pd
 from nexinfosys.embedded_nis import NIS
 from typing import Dict
 from enbios.input import Simulation
-from enbios.input.data.lci import LCIIndex
+from enbios.input.lci import LCIIndex
 from enbios.processing.nis_file_generator import generate_import_commands_command, generate_processors_command, \
     generate_interfaces_command
 
@@ -57,7 +57,7 @@ wind_onshore_competing,musiasem,Energy_system.Electricity_supply.Electricity_gen
         self._typed_block = {}
         df = pd.read_csv(self._block_types_path)
         # Assume all columns are present: "name", "type"
-        for r in df.iterrows():
+        for idx, r in df.iterrows():
             if self._typed_block.get(r["name"]):
                 print(f"Entry for {r['name']} repeated. Overwriting")
             self._typed_block[r["name"]] = r["type"]
@@ -67,7 +67,7 @@ wind_onshore_competing,musiasem,Energy_system.Electricity_supply.Electricity_gen
         self._sim_musiasem = {}
         df = pd.read_csv(self._correspondence_path)
         # Assume all columns are present: "name", "match_target_type", "match_target", "weight", "match_conditions"
-        for r in df.iterrows():
+        for idx, r in df.iterrows():
             if r["match_target_type"].lower() == "lca":
                 d = self._sim_lca
             else:

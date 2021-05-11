@@ -2,6 +2,7 @@ from typing import Dict, Tuple, List
 
 from nexinfosys.command_generators import Issue
 from nexinfosys.embedded_nis import NIS
+from nexinfosys.model_services import State
 
 
 def read_parse_configuration(file_name) -> Dict:
@@ -11,6 +12,11 @@ def read_parse_configuration(file_name) -> Dict:
     :param file_name: Name of the configuration file
     :return: If mandatory keys are present it returns a "dict" with every variable in the configuration file
     """
+    def read_json_configuration(file_content) -> Dict:
+        import json
+        d = json.loads(file_content)
+        return d
+
     def read_yaml_configuration(file_content) -> Dict:
         import yaml
         d = yaml.load(file_content, Loader=yaml.FullLoader)
@@ -24,6 +30,8 @@ def read_parse_configuration(file_name) -> Dict:
         # Read depending on format
         if file_name.endswith("yaml") or file_name.endswith("yml"):
             cfg = read_yaml_configuration(contents)
+        elif file_name.endswith("json"):
+            cfg = read_json_configuration(contents)
     elif isinstance(file_name, dict):
         cfg = file_name
 
@@ -44,13 +52,16 @@ def read_parse_configuration(file_name) -> Dict:
     return cfg
 
 
-def read_prepare_nis_file(nis_file_url: str) -> Tuple[NIS, List[Issue]]:
+def read_submit_solve_nis_file(nis_file_url: str, state: State, solve=False) -> Tuple[NIS, List[Issue]]:
     nis = NIS()
-    nis.open_session(True)
+    nis.open_session(True, state)
     nis.reset_commands()
     # Load file and execute it
     nis.load_workbook(nis_file_url)
-    issues = nis.submit_and_solve()
+    if solve:
+        issues = nis.submit_and_solve()
+    else:
+        issues = nis.submit()
     # tmp = nis.query_available_datasets()
     # print(tmp)
     # d = nis.get_results([(tmp[0]["type"], tmp[0]["name"])])
