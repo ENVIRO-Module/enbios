@@ -18,20 +18,23 @@ def convert_recipe_to_nis(recipe_file, lcia_file):
                      "Human damage ozone formation": ("HOFP", dict(name=2, compartment=4, horizons=[5, 6, 7], row=4, unit_label_at=(2,), unit="kg")),
                      "Particulate matter formation": ("PMFP", dict(name=2, horizons=[3, 4, 5], row=4, unit_label_at=(2,), unit="kg")),
                      "Ecosyste damage ozone formation": ("EOFP", dict(name=2, compartment=4, horizons=[5, 6, 7], row=4, unit_label_at=(2,), unit="kg")),
-                     "Terrestrial acidification": ("AP", dict(name=1, formula=1, horizons=[4, 5, 6], row=5, unit_label_at=(2,), unit="kg")),
-                     "Freshwater eutrophication": ("FEP", dict(name=1, compartment=2, formula=1, horizons=[4, 5, 6], row=5, unit_label_at=(2,), unit="kg")),
-                     "Marine eutrophication": ("MEP", dict(name=1, compartment=2, formula=1, horizons=[4, 5, 6], row=5, unit_label_at=(2,), unit="kg")),
+                     # "Terrestrial acidification": ("AP", dict(name=1, formula=1, horizons=[2, 3, 4], row=5, unit_label_at=(2,), unit="kg")),
+                     # "Freshwater eutrophication": ("FEP", dict(name=1, compartment=2, formula=1, horizons=[3, 4, 5], row=5, unit_label_at=(2,), unit="kg")),
+                     # "Marine eutrophication": ("MEP", dict(name=1, compartment=2, formula=1, horizons=[3, 3, 3], row=5, unit_label_at=(2,), unit="kg")),
 
-                     "Terrestrial ecotoxicity": ("ETPterrestrial", dict(name=2, compartment=4, formula=1, horizons=[5, 6, 7], row=4, unit_label_at=(2,), unit="kg")),
-                     "Freshwater ecotoxicity": ("ETPfw", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
-                     "Marine ecotoxicity": ("ETPmarine", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
-                     "Human carcinogenic toxicity": ("CFhuman_mid_carc", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
-                     "Human noncarcinogenic toxicity": ("CFhuman_mid_ncarc", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
+                     # "Terrestrial ecotoxicity": ("ETPterrestrial", dict(name=2, compartment=4, formula=1, horizons=[5, 6, 7], row=4, unit_label_at=(2,), unit="kg")),
+                     # "Freshwater ecotoxicity": ("ETPfw", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
+                     # "Marine ecotoxicity": ("ETPmarine", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
+                     # "Human carcinogenic toxicity": ("CFhuman_mid_carc", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
+                     # "Human noncarcinogenic toxicity": ("CFhuman_mid_ncarc", dict(name=2, compartment=5, formula=1, horizons=[6, 7, 8], row=4, unit_label_at=(2,), unit="kg")),
+
+                     ## The following are not easily treatable by LCIAMethods. Let keep them disabled ... (until a way to deal with them is decided)
                      # "Land transformation": ("LTx", dict(name=1, formula=1, horizons=[4, 5, 6], row=3, unit_label_at=None, unit="kg")),
                      # "Land occupation": ("LOcc", dict(name=1, formula=1, horizons=[4, 5, 6], row=5, unit_label_at=(2,), unit="kg")),
                      # "Water consumption": ("Wcons", dict(name=1, formula=1, horizons=[4, 5, 6], row=5, unit_label_at=(2,), unit="kg")),
-                     "Mineral resource scarcity": ("MResScar", dict(name=1, formula=1, horizons=[3, 4, 5], row=4, unit_label_at=(2,), unit="kg")),
-                     "Fossil resource scarcity": ("FFP", dict(name=1, formula=1, horizons=[3, 4, 5], row=4, unit_label_at=(2,), unit="kg"))
+
+                     # "Mineral resource scarcity": ("SOP", dict(name=1, formula=1, horizons=[3, 4, 5], row=4, unit_label_at=(2,), unit="kg")),
+                     # "Fossil resource scarcity": ("FFP", dict(name=1, formula=1, horizons=[3, 4, 5], row=4, unit_label_at=(2,), unit="kg"))
                      }
 
     horizon_codes = ["I", "H", "E"]  # Individualist (20), Hierarchist (100), Egalitarian (>=1000)
@@ -76,7 +79,7 @@ def convert_recipe_to_nis(recipe_file, lcia_file):
                                   "Compartment"])
 
     s = StringIO()
-    s.write("# To regenerate this file, execute module 'recipe_to_nis.py'")
+    s.write("# To regenerate this file, execute module 'recipe_to_nis.py'\n")
     df.to_csv(s, index=False)
     with open(lcia_file, "wt") as f:
         f.write(s.getvalue())
