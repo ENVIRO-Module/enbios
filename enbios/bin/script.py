@@ -8,23 +8,34 @@ from enbios.input.data_preparation.sentinel_to_nis_prep import sentinel_to_prep_
 from enbios.processing.main import Enviro
 
 """
+* Action to prepare a NIS file. Output issues (console), output state (to a file and hash)
+
+
+"""
+
+"""
 DEVELOPMENT CLI EXECUTION:
  
-python -m enbios.bin.enbios
+python -m enbios.bin.script
   <it will show the automatically generated help>
 
-CLI EXECUTION:
-script.py (same as previous)
-  <it will show the automatically generated help>
+CLI EXECUTION ("enbios" because it is defined with that name in setup.py):
+ 
+enbios (same as previous)
+  <it will show the -automatically generated- help>
   
 """
 
 
 class EnbiosCLI:
-    def recipe_to_nis(self, recipe_file: str, lcia_file: str):
+    def recipe_to_csv(self, recipe_file: str, lcia_file: str):
         """
         Convert an XLSX file with ReCiPe2016 to a CSV file ready to be declared in a DatasetDef which can be imported
         in a "LCIAMethod" command
+
+        Example:
+           enbios recipe_to_csv /home/rnebot/GoogleDrive/AA_SENTINEL/workspace_20210331/ReCiPe2016_CFs_v1.1_20180117.xlsx /home/rnebot/GoogleDrive/AA_SENTINEL/case_studies/library/recipe2016_2.csv
+
 
         :param recipe_file: The full path of the input ReCiPe2016 XLSX file
         :param lcia_file: The full path of the output CSV file
@@ -54,8 +65,6 @@ class EnbiosCLI:
         """
         lci_to_interfaces_csv(lci_file_path, csv_file)
 
-
-    # lci_to_nis /home/rnebot/GoogleDrive/AA_SENTINEL/enviro_tmp/ /home/rnebot/GoogleDrive/AA_SENTINEL/enviro/sim_correspondence_example.csv https://docs.google.com/spreadsheets/d/15NNoP8VjC2jlhktT0A8Y0ljqOoTzgar8l42E5-IRD90/edit?usp=sharing /home/rnebot/Downloads/out.xlsx
     def lci_to_nis(self, spold_files_folder: str, correspondence_path: str, nis_base_url: str, nis_structurals_base_path: str):
         """
         Scan correspondence file AND a NIS file to extract a NIS file with the commands:
@@ -69,6 +78,9 @@ class EnbiosCLI:
            wind_onshore_competing,lca,2fdb6da1-8281-453d-8a7c-0184dc3586c4_66c93e71-f32b-4591-901c-55395db5c132.spold,,
            wind_onshore_competing,musiasem,Energy_system.Electricity_supply.Electricity_generation.Electricity_renewables.Electricity_wind.Electricity_wind_onshore,,
 
+        Example:
+           enbios lci_to_nis /home/rnebot/GoogleDrive/AA_SENTINEL/enviro_tmp/ /home/rnebot/GoogleDrive/AA_SENTINEL/enviro/sim_correspondence_example.csv https://docs.google.com/spreadsheets/d/15NNoP8VjC2jlhktT0A8Y0ljqOoTzgar8l42E5-IRD90/edit?usp=sharing /home/rnebot/Downloads/out.xlsx
+
         :param spold_files_folder: Local folder where .spold files are stored
         :param correspondence_path: Correspondence file
         :param nis_base_url: URL of a NIS file that will be used as Base for the assembly of the model
@@ -76,7 +88,7 @@ class EnbiosCLI:
         :return:
         """
         s2n = SpoldToNIS()
-        s2n.spold2nis(spold_files_folder, correspondence_path, nis_base_url, nis_structurals_base_path)
+        s2n.spold2nis("generic_energy_production", spold_files_folder, correspondence_path, nis_base_url, nis_structurals_base_path)
 
     def enviro(self, cfg_file_path):
         """
