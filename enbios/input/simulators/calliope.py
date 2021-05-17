@@ -52,7 +52,7 @@ class CalliopeSimulation(Simulation):
         self._simulation_files_path = simulation_files_path
         self.read()
 
-    def read(self):
+    def read(self, filter_model: str):
         self._model = calliope.Model(self._simulation_files_path)
         ds = self._model.inputs
         # Carriers -> InterfaceTypes

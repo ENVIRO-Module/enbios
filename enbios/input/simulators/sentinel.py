@@ -5,7 +5,6 @@ obtain either a MuSIASEM or LCA structure
 
 """
 from typing import Dict
-import pandas as pd
 
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
@@ -20,7 +19,15 @@ class SentinelSimulation(Simulation):
     def __init__(self, sentinel_index_path):
         self._sentinel_index_path = sentinel_index_path
 
-    def _read(self, filter_model: str):
+    def read_raw(self):
+        """ Read variables and datasets """
+        pkg = read_pkg(self._sentinel_index_path)
+        lst = []
+        for r in pkg.resources:
+            df = to_df(r)
+            lst.append(df)
+
+    def read(self, filter_model: str):
         """
         Reads Sentinel package completely
 
@@ -89,7 +96,7 @@ class SentinelSimulation(Simulation):
         to help in producing "correspondence"
         :return:
         """
-        prd, scenarios, regions, times, techs, carriers, col_types, ct = self._read("")
+        prd, scenarios, regions, times, techs, carriers, col_types, ct = self.read("")
 
         cmds = []
         # Not NIS
@@ -205,23 +212,6 @@ class SentinelSimulation(Simulation):
         """
 
         # Yield NIS commands and a descriptor of which region
-
-    def read(self):
-        """ Read variables and datasets """
-        pkg = read_pkg(self._sentinel_index_path)
-        lst = []
-        for r in pkg.resources:
-            df = to_df(r)
-            lst.append(df)
-        print(pkg)
-
-    def blocks(self):
-        """ An iterator into the blocks (technologies) in the simulation """
-        pass
-
-    def block_information(self, block_name) -> Dict[str, str]:
-        """ Return information for block. A dictionary """
-        pass
 
 
 dp = "/home/rnebot/Downloads/borrame/calliope-output"
