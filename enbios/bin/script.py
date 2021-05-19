@@ -98,6 +98,7 @@ class EnbiosCLI:
             correspondence_files_path: ""
             simulation_type: sentinel
             simulation_files_path: ""
+            n_cpus: 1
             lci_data_locations:
               - ""
             output_directory: ""

@@ -30,8 +30,13 @@ from pkg_resources import yield_lines
 # from Cython.Build import cythonize
 # from Cython.Distutils import build_ext
 
+"""
+python3 setup.py sdist bdist_wheel
+twine upload --skip-existing dist/*
+"""
+
 package_name = 'enbios'
-version = '0.8'
+version = '0.10'
 
 
 def parse_requirements(strs):
@@ -82,9 +87,7 @@ setup(
     license='MIT',
     author=['Rafael Nebot', 'Cristina Madrid'],
     author_email='rnebot@itccanarias.org',
-    entry_points = {
-        'console_scripts': ['enbios=enbios.bin.script:main'],
-    },
+    entry_points={'console_scripts': ['enbios=enbios.bin.script:main']},
     long_description=long_description,
     long_description_content_type='text/markdown',
     description='Indicators of environmental sustainability of energy systems using MuSIASEM and LCA methodologies'

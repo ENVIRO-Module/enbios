@@ -15,7 +15,6 @@ MODEL -> RUN -> ASSESS (read model and results; match model to data; elaborate N
 import networkx as nx
 import calliope
 from typing import List
-import yaml
 
 from enbios.input import Simulation
 
