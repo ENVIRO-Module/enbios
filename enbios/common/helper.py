@@ -56,7 +56,7 @@ def generate_workbook(cmds):
     wb = Workbook(write_only=True)
     ws_count = 0
     for name, df in cmds:
-        if df.shape[0] < 2:
+        if df.shape[0] == 0:
             continue
 
         ws_count += 1
