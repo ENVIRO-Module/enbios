@@ -1,4 +1,3 @@
-import copy
 import os
 
 import itertools
@@ -7,8 +6,9 @@ import tempfile
 import pandas as pd
 from typing import Tuple
 
+import sys
 from nexinfosys.common.decorators import deprecated
-from nexinfosys.common.helper import download_file, PartialRetrievalDictionary
+from nexinfosys.common.helper import download_file, PartialRetrievalDictionary, any_error_issue
 from nexinfosys.embedded_nis import NIS
 from nexinfosys.models.musiasem_concepts import Processor
 from nexinfosys.serialization import deserialize_state
@@ -16,7 +16,7 @@ from nexinfosys.serialization import deserialize_state
 from enbios.common.helper import generate_workbook, hash_array, prepare_base_state, list_to_dataframe
 from enbios.input import Simulation
 from enbios.input.lci import LCIIndex
-from enbios.input.simulators.calliope import CalliopeSimulation
+# from enbios.input.simulators.calliope import CalliopeSimulation
 from enbios.input.simulators.sentinel import SentinelSimulation
 from enbios.processing import read_parse_configuration, read_submit_solve_nis_file
 from enbios.processing.model_merger import Matcher, merge_models
@@ -36,6 +36,8 @@ class Enviro:
 
     def set_cfg_file_path(self, cfg_file_path):
         self._cfg = read_parse_configuration(cfg_file_path)
+        if "n_cpus" not in self._cfg:
+            self._cfg["n_cpus"] = 1
         self._cfg_file_path = cfg_file_path if isinstance(cfg_file_path, str) else None
 
     def _prepare_base(self, solve: bool):
@@ -47,10 +49,11 @@ class Enviro:
 
     def _get_simulation(self) -> Simulation:
         # Simulation
-        if self._cfg["simulation_type"].lower() == "calliope":
-            simulation = CalliopeSimulation(self._cfg["simulation_files_path"])
-        elif self._cfg["simulation_type"].lower() == "sentinel":
+        simulation = None
+        if self._cfg["simulation_type"].lower() == "sentinel":
             simulation = SentinelSimulation(self._cfg["simulation_files_path"])
+        # elif self._cfg["simulation_type"].lower() == "calliope":
+        #     simulation = CalliopeSimulation(self._cfg["simulation_files_path"])
         return simulation
 
     def _prepare_process(self) -> Tuple[NIS, LCIIndex, Simulation]:
@@ -153,6 +156,7 @@ class Enviro:
         # Split in fragments, process each fragment separately
         # Acumulate results
         indicators = pd.DataFrame()
+
         for partial_key, fragment_metadata, fragment_processors in self._read_simulation_fragments():
             # fragment_metadata: dict with regions, years, scenarios in the fragment
             # fragment_processors: list of processors with their attributes which will be interfaces
@@ -201,6 +205,41 @@ class Enviro:
         # TODO Write indicator files
 
         # os.remove(temp_name)
+
+
+def run_nis_for_indicators(nis_file_name, state):
+    nis = NIS()
+    nis.open_session(True, state)
+    nis.load_workbook(f"file://{nis_file_name}")
+    issues = nis.submit_and_solve()
+    tmp = nis.query_available_datasets()
+    if not any_error_issue(issues):
+        error = False
+        outputs = nis.get_results([
+            ("model", "Model.xlsx"),
+            ("dataset", "flow_graph_solution_indicators", "csv"),
+            ("dataset", "flow_graph_solution", "csv"),
+            ("dataset", "flow_graph_solution_edges", "csv"),
+            ("dataset", "flow_graph_solution_sankey", "csv")
+        ])
+    else:
+        error = True
+        outputs = nis.get_results([
+            ("model", "Model", "xlsx")
+        ])
+    if not error:
+        df = outputs[1][0] if outputs[1][2] else pd.DataFrame()
+    else:
+        df = pd.DataFrame()
+    with open(nis_file_name+".idem.xlsx", "wb") as f:
+        f.write(outputs[0][0])
+
+    # TODO Obtain indicators matrix:
+    #   (scenario, processor, region, time, ¿carrier?) -> (i1, ..., in)
+    # TODO Append to global indicators matrix (this could be done sending results and another process
+    #  would be in charge of assembling)
+    nis.close_session()
+    return df
 
 
 def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment_processors, output_directory):
@@ -323,13 +362,27 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
 
         return [lci_proc]
 
-    def _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces):
+    def _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces, variables, scenarios):
         cmds = []
+        # ProblemStatement
+        lst = [["Scenario", "Parameter", "Value", "Description"]]
+        for s in scenarios:
+            # Scenario, Parameter, Value, Description
+            lst.append([f"s{s}", "NISSolverObserversPriority", f"o{s}", f"Scenario s{s}, observer o{s}"])
+        cmds.append(("ProblemStatement sim fragment", list_to_dataframe(lst)))
+        # InterfaceTypes
+        lst = [["InterfaceTypeHierarchy", "InterfaceType", "Sphere", "RoegenType", "ParentInterfaceType", "Formula",
+                "Description", "Unit", "OppositeSubsystemType", "Attributes"]]
+        for v_name, attrs in variables.items():
+            lst.append(["sentinel", v_name, "Technosphere", "Flow", "", "",
+                        "It is the main output" if attrs["main_flow"] else "", attrs["unit"], "", ""])
+        cmds.append(("InterfaceTypes sim fragment", list_to_dataframe(lst)))
+
         if clone:
             cmds.append(("BareProcessors regions", list_to_dataframe(clone_processors)))
             cmds.append(("ProcessorScalings", list_to_dataframe(cloners)))
-        cmds.append(("BareProcessors simulation fragment", list_to_dataframe(processors)))
-        cmds.append(("Interfaces simulation fragment", list_to_dataframe(interfaces)))
+        cmds.append(("BareProcessors sim fragment", list_to_dataframe(processors)))
+        cmds.append(("Interfaces sim fragment", list_to_dataframe(interfaces)))
         s = generate_workbook(cmds)
         if s:
             temp_name = tempfile.NamedTemporaryFile(dir=output_directory, delete=False)
@@ -339,22 +392,19 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
         else:
             return None
 
-    def _run_nis_for_indicators(nis_file_name, state):
-        nis = NIS()
-        nis.open_session(True, state)
-        nis.load_workbook(nis_file_name)
-        r = nis.submit_and_solve()
-        tmp = nis.query_available_datasets()
-        print(tmp)
-        # TODO Obtain indicators matrix:
-        #   (scenario, processor, region, time, ¿carrier?) -> (i1, ..., in)
-        # TODO Append to global indicators matrix (this could be done sending results and another process
-        #  would be in charge of assembling)
-        nis.close_session()
-        return pd.DataFrame()
-
-    def is_output_flow(flow_name):
+    def is_main_flow(flow_name):  # TODO Depends on simulation
         return flow_name in ["flow_out"]
+
+    def get_flow_orientation(flow_name):  # TODO Depends on simulation
+        return "Output" if flow_name in ["flow_out"] else "Input"
+
+    def get_flow_unit(flow_name):  # TODO Depends on simulation
+        if flow_name.lower() in ["flow_out", "flow_in"]:
+            return "kWh"
+        elif flow_name.lower() in ["capacity_factor"]:
+            return "kW"
+        else:
+            return "dimensionless"
 
     def _interface_used_in_some_indicator(iface):
         return True
@@ -398,9 +448,13 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
         clone_processors = []
 
     already_added_processors = set()
+    already_added_lci = set()
+    variables = dict()
+    # If not periods are defined, define a specific year. At least one is needed for the solver to run
+    default_time = "2038" if len(fragment_metadata["periods"]) == 0 else "Year"
     for p in fragment_processors:  # Each Simulation processor
         # Update time and scenario (they can change from entry to entry, but for MuSIASEM it is the same entity)
-        time_ = p.attrs.get("year", "Year")
+        time_ = p.attrs.get("year", default_time)
         scenario = p.attrs.get("scenario", "")
         region = p.attrs.get("region", "")
         # Find Dendrogram matches
@@ -410,7 +464,7 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
             continue
         first_name = None
         for m_name, m_proc in musiasem_matches.items():
-            name = f"{p.attrs['technology']}_{region}_{scenario}"
+            name = f"{p.attrs['technology']}_{region}"  # TODO Maybe "carrier"? depends on the intention
             parent = m_name
             description = f"Simulation {p.attrs['technology']} for region {region}, scenario {scenario}."
             original_name = f"{p.attrs['technology']}"
@@ -429,36 +483,47 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
         if first_name is not None:
             relative_to = None
             for i in set(p.attrs.keys()).difference(_idx_cols):
-                if is_output_flow(i):
+                if is_main_flow(i):
                     relative_to = i
                 v = p.attrs[i]
-                interfaces.append([name, i, "", "", "", "<orientation>", "", "", "", "", v,
-                                   "", "", "", "", "", "", time_, scenario, "", ""])
+                orientation = get_flow_orientation(i)
+                interfaces.append([name, i, "", "", "", orientation, "", "", "", "", v,
+                                   "", "", "", "", "", "", time_, f"o{scenario}", "", ""])
+                if i not in variables:
+                    variables[i] = dict(main_flow=is_main_flow(i), orientation=orientation, unit=get_flow_unit(i))
 
-            # Find LCI matches, expand interfaces
-            lci_matches = _find_lci(prd, structural_lci_procs, base_musiasem_procs, p)
-            if lci_matches is None or len(lci_matches) == 0:
-                print(f"{p} has no LCI data associated. Cannot provide information for indicators, skipped.")
-                continue
-            for cp in lci_matches:
-                for i in cp.factors:
-                    if not _interface_used_in_some_indicator(i.name):  # Economy of the model: avoid specifying interfaces not used later
-                        continue
-                    q = i.quantitative_observations[0]
-                    if q.attributes.get("relative_to", None) is None:
-                        continue
-                    unit = q.attributes.get("unit")  # TODO unit / relative_to_unit
-                    orientation = i.attributes.get("orientation", "")
-                    v = q.value
-                    # TODO Static: does not depend on scenario or time, avoid inserting repeatedly
-                    interfaces.append([name, i.name, "", "", "", orientation, "", "", "", "", v,
-                                       "", relative_to, "", "", "", "", "Year", "", "", ""])
+            if (name, parent) not in already_added_lci:
+                already_added_lci.add((name, parent))
+                # Find LCI matches, expand interfaces
+                lci_matches = _find_lci(prd, structural_lci_procs, base_musiasem_procs, p)
+                if lci_matches is None or len(lci_matches) == 0:
+                    print(f"{p} has no LCI data associated. Cannot provide information for indicators, skipped.")
+                    continue
+                for cp in lci_matches:
+                    for cont, i in enumerate(cp.factors):
+                        if cont >= 20:
+                            break  # Artificial limit to reduce file size, for test purposes
+
+                        if not _interface_used_in_some_indicator(i.name):  # Economy of the model: avoid specifying interfaces not used later
+                            continue
+                        q = i.quantitative_observations[0]
+                        if q.attributes.get("relative_to", None) is None:
+                            continue
+                        unit = q.attributes.get("unit")  # TODO unit / relative_to_unit
+                        orientation = i.attributes.get("orientation", "")
+                        v = q.value
+                        # TODO Static: does not depend on scenario or time, avoid inserting repeatedly
+                        interfaces.append([name, i.name, "", "", "", orientation, "", "", "", "", v,
+                                           "", relative_to, "", "", "", "", "Year", "", "", ""])
 
     # Generate and run NIS file, returning the result
-    nis_file_name = _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces)
+    nis_file_name = _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces,
+                                                variables, fragment_metadata["scenarios"])
     if nis_file_name:
+        print(f'frag_file = "{nis_file_name}"')
+        sys.exit(1)  # For now
         try:
-            df = _run_nis_for_indicators(f"file://{nis_file_name}", state)
+            df = run_nis_for_indicators(nis_file_name, state)
         finally:
             os.remove(nis_file_name)
         return df
