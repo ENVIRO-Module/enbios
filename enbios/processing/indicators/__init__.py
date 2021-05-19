@@ -1,4 +1,6 @@
-from sre_parse import State
+import math
+
+from nexinfosys.model_services import State
 
 materials = {
     "Aluminium",
@@ -63,9 +65,10 @@ def supply_risk(state: State):
     sr = 0
     for i in materials:
         ri = state.get(i)
-        SRi = state.get(f"sr{i}")
-        ci = state.get(f"c{i}")
-        sr += ri*SRi/ci
+        if ri is not None:
+            SRi = state.get(f"sr{i}")
+            ci = state.get(f"c{i}")
+            sr += ri*SRi/ci
     return sr
 
 
@@ -74,7 +77,11 @@ def recycling_rate(state: State):
     rr_denom = 0
     for i in materials:
         ri = state.get(i)
-        RRi = state.get(f"rr{i}")
-        rr_num += ri*RRi
-        rr_denom += ri
-    return rr_num / rr_denom
+        if ri is not None:
+            RRi = state.get(f"rr{i}")
+            rr_num += ri*RRi
+            rr_denom += ri
+    if rr_denom != 0.0:
+        return rr_num / rr_denom
+    else:
+        return -1.0
