@@ -199,6 +199,14 @@ class SpoldToNIS:
             for idx, r in tmp.iterrows():
                 if r["amount"] == 1.0:
                     main_output = get_nis_name(idx)
+                    break
+            # Special activities can be scaled according to a -1 exchange (Nick clarified this)
+            if main_output is None:
+                for idx, r in tmp.iterrows():
+                    if r["amount"] == -1.0:
+                        main_output = get_nis_name(idx)
+                        break
+
             if main_output is None:
                 main_output = default_output_interface
             # Add output interface first
