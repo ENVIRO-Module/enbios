@@ -1,5 +1,5 @@
 brightway2==2.3
-nexinfosys>=0.57
+nexinfosys>=0.61
 # calliope==0.6.6.post1
 friendly-data>=0.1.dev1
 # friendly-data-registry>=20210406

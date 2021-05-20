@@ -36,7 +36,7 @@ twine upload --skip-existing dist/*
 """
 
 package_name = 'enbios'
-version = '0.10'
+version = '0.12'
 
 
 def parse_requirements(strs):
