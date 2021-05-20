@@ -126,7 +126,8 @@ class EnbiosCLI:
 
 
 def main():
-    os.environ["PAGER"] = "cat"
+    import platform
+    os.environ["PAGER"] = "cat" if platform.system().lower() != "windows" else "-"
     fire.Fire(EnbiosCLI)
 
 
