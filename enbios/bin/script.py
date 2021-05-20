@@ -90,7 +90,12 @@ class EnbiosCLI:
         s2n = SpoldToNIS()
         s2n.spold2nis("generic_energy_production", spold_files_folder, correspondence_path, nis_base_url, nis_structurals_base_path)
 
-    def enviro(self, cfg_file_path):
+    def enviro(self, cfg_file_path,
+               just_one_fragment: bool=False,
+               generate_nis_base_file: bool=False,
+               generate_nis_fragment_file: bool=False,
+               generate_interface_results: bool=False,
+               generate_indicators: bool=False):
         """
         The main function of the package, reads the contents of the configuration file, which can be either a JSON or YAML
         file. Following an example of YAML file contents:
@@ -106,11 +111,18 @@ class EnbiosCLI:
         (you can copy and paste the example in an empty text file as reference, and ".yaml" as extension)
 
         :param cfg_file_path:
+        :param just_one_fragment: True if only one of the fragments is to be computed, to test things
+        :param generate_nis_base_file: True if the Base file should be generated (once) for testing purposes
+        :param generate_nis_fragment_file: True if the current fragment should be dumped into a NIS formatted XLSX file
+        :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
+        :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
         :return:
         """
         t = Enviro()
         t.set_cfg_file_path(cfg_file_path)
-        t.compute_indicators_from_base_and_simulation()
+        t.compute_indicators_from_base_and_simulation(just_one_fragment, generate_nis_base_file,
+                                                      generate_nis_fragment_file,
+                                                      generate_interface_results, generate_indicators)
 
 
 def main():

@@ -1,4 +1,5 @@
 import os
+import re
 
 import itertools
 import tempfile
@@ -10,6 +11,7 @@ import sys
 from nexinfosys.common.decorators import deprecated
 from nexinfosys.common.helper import download_file, PartialRetrievalDictionary, any_error_issue
 from nexinfosys.embedded_nis import NIS
+from nexinfosys.model_services import State
 from nexinfosys.models.musiasem_concepts import Processor
 from nexinfosys.serialization import deserialize_state
 
@@ -143,29 +145,83 @@ class Enviro:
                 md["flows"].update(tmp)
             yield partial_key, md, procs
 
-    def compute_indicators_from_base_and_simulation(self):
+    def compute_indicators_from_base_and_simulation(self,
+                                                    just_one_fragment: bool=False,
+                                                    generate_nis_base_file: bool=False,
+                                                    generate_nis_fragment_file: bool=False,
+                                                    generate_interface_results: bool=False,
+                                                    generate_indicators: bool=False):
         """
         MAIN entry point of current ENVIRO
         Previously, a Base NIS must have been prepared, see @_prepare_base
 
+        :param just_one_fragment: True if only one of the fragments is to be computed, to test things
+        :param generate_nis_base_file: True if the Base file should be generated (once) for testing purposes
+        :param generate_nis_fragment_file: True if the current fragment should be dumped into a NIS formatted XLSX file
+        :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
+        :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
         :return:
         """
+
+        def get_valid_name(original_name):
+            prefix = original_name[0] if original_name[0].isalpha() else "_"
+            remainder = original_name[1:] if original_name[0].isalpha() else original_name
+            return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
+
         # Prepare Base
         serial_state = self._prepare_base(solve=False)
-        output_dir = tempfile.gettempdir()
+        output_dir = self._cfg["output_directory"]
+        os.makedirs(output_dir, exist_ok=True)
+        if generate_nis_base_file:
+            nis_file, _, _ = run_nis_for_indicators(None, deserialize_state(serial_state))
+            with open(output_dir+os.sep+"nis_base.idempotent.xlsx", "wb") as f:
+                f.write(nis_file)
+
+        tmp_output_dir = tempfile.gettempdir()
         # Split in fragments, process each fragment separately
         # Acumulate results
-        indicators = pd.DataFrame()
-
-        for partial_key, fragment_metadata, fragment_processors in self._read_simulation_fragments():
+        # indicators = []
+        indicators_csv_file = output_dir + os.sep + f"indicators.csv"
+        for i, (partial_key, fragment_metadata, fragment_processors) in enumerate(self._read_simulation_fragments()):
             # fragment_metadata: dict with regions, years, scenarios in the fragment
             # fragment_processors: list of processors with their attributes which will be interfaces
             print(f"{partial_key}: {len(fragment_processors)}")
-            results = process_fragment(serial_state, partial_key, fragment_metadata, fragment_processors, output_dir)
+            nis_idempotent_file, df_indicators, df_interfaces = process_fragment(serial_state, partial_key,
+                                                                                 fragment_metadata, fragment_processors,
+                                                                                 tmp_output_dir)
 
-            # TODO Append "results" to "indicators"
-            indicators += results
+            # Append indicators
+            # indicators.append(df_indicators)
+            if not os.path.isfile(indicators_csv_file):
+                df_indicators.to_csv(indicators_csv_file)
+            else:
+                df_indicators.to_csv(indicators_csv_file, mode='a', header=False)
 
+            if generate_nis_fragment_file:
+
+                with open(output_dir + os.sep + f"fragment_nis{get_valid_name(str(partial_key))}.xlsx", "wb") as f:
+                    f.write(nis_idempotent_file)
+
+            if generate_interface_results:
+                csv_name = output_dir + os.sep + f"fragment_interfaces{get_valid_name(str(partial_key))}.csv"
+                if not df_interfaces.empty:
+                    df_interfaces.to_csv(csv_name)
+                else:
+                    with open(csv_name, "wt") as f:
+                        f.write("Could not obtain interface values (??)")
+
+            if generate_indicators:
+                csv_name = output_dir + os.sep + f"fragment_indicators{get_valid_name(str(partial_key))}.csv"
+                if not df_indicators.empty:
+                    df_indicators.to_csv(csv_name)
+                else:
+                    with open(csv_name, "wt") as f:
+                        f.write("Could not obtain indicator values (??)")
+
+            if just_one_fragment:
+                break
+
+        # TODO Concat in a single DataFrame, save
         # TODO Save indicators DataFrame as a single CSV file
 
     @deprecated  # Use "compute_indicators_from_base_and_simulation"
@@ -210,7 +266,10 @@ class Enviro:
 def run_nis_for_indicators(nis_file_name, state):
     nis = NIS()
     nis.open_session(True, state)
-    nis.load_workbook(f"file://{nis_file_name}")
+    if nis_file_name:
+        nis.load_workbook(f"file://{nis_file_name}")
+    elif isinstance(state, State):
+        nis.append_command("Ignore me", list_to_dataframe([["dummy"], ["dummy"]]))
     issues = nis.submit_and_solve()
     tmp = nis.query_available_datasets()
     if not any_error_issue(issues):
@@ -219,27 +278,28 @@ def run_nis_for_indicators(nis_file_name, state):
             ("model", "Model.xlsx"),
             ("dataset", "flow_graph_solution_indicators", "csv"),
             ("dataset", "flow_graph_solution", "csv"),
-            ("dataset", "flow_graph_solution_edges", "csv"),
-            ("dataset", "flow_graph_solution_sankey", "csv")
         ])
     else:
         error = True
         outputs = nis.get_results([
-            ("model", "Model", "xlsx")
+            ("model", "Model.xlsx")
         ])
     if not error:
-        df = outputs[1][0] if outputs[1][2] else pd.DataFrame()
+        df_indicators = outputs[1][0] if outputs[1][2] else pd.DataFrame()
+        df_interfaces = outputs[2][0] if outputs[2][2] else pd.DataFrame()
     else:
-        df = pd.DataFrame()
-    with open(nis_file_name+".idem.xlsx", "wb") as f:
-        f.write(outputs[0][0])
+        df_indicators = pd.DataFrame()
+        df_interfaces = pd.DataFrame()
+    nis_file = outputs[0][0]
+    # with open(nis_file_name+".idem.xlsx", "wb") as f:
+    #     f.write(outputs[0][0])
 
     # TODO Obtain indicators matrix:
     #   (scenario, processor, region, time, ¿carrier?) -> (i1, ..., in)
     # TODO Append to global indicators matrix (this could be done sending results and another process
     #  would be in charge of assembling)
     nis.close_session()
-    return df
+    return nis_file, df_indicators, df_interfaces
 
 
 def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment_processors, output_directory):
@@ -414,6 +474,7 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
     def _interface_used_in_some_indicator(iface):
         return True
 
+    print(f"Processing fragment: {fragment_metadata}")
     state = deserialize_state(base_serial_state)
     prd = state.get("_glb_idx")
     base_musiasem_procs, structural_lci_procs = _get_processors_by_type()
@@ -521,19 +582,24 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
                         interfaces.append([name, i.name, "", "", "", orientation, "", "", "", "", v,
                                            "", relative_to, "", "", "", "", "Year", "", "", ""])
 
+    print(f"Generating NIS file for: {fragment_metadata}")
+
     # Generate and run NIS file, returning the result
     nis_file_name = _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces,
                                                 variables, fragment_metadata["scenarios"])
     if nis_file_name:
         print(f'frag_file = "{nis_file_name}"')
-        sys.exit(1)  # For now
+        # sys.exit(1)  # For now
         try:
-            df = run_nis_for_indicators(nis_file_name, state)
+            print(f"Processing NIS file for: {fragment_metadata}")
+            nis_idempotent, df_indicators, df_interfaces = run_nis_for_indicators(nis_file_name, state)
+            print(f"Processing NIS file done, result shape: {df_indicators.shape}")
         finally:
             os.remove(nis_file_name)
-        return df
+        return nis_idempotent, df_indicators, df_interfaces
     else:
-        return pd.DataFrame()
+        return None, pd.DataFrame(), pd.DataFrame()
+
 
 
 if __name__ == '__main__':
