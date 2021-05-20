@@ -1,5 +1,7 @@
+import functools
 import os
 import re
+from multiprocessing import Pool, cpu_count
 
 import itertools
 import tempfile
@@ -29,6 +31,55 @@ from enbios.processing.model_merger import Matcher, merge_models
 #####################################################
 _idx_cols = ["region", "scenario", "technology", "model", "carrier",
              "year", "timestep", "unit", "variable", "description"]
+
+
+def parallelizable_process_fragment(param,
+                                    s_state,
+                                    tmp_out_dir,
+                                    output_dir,
+                                    generate_nis_fragment_file,
+                                    generate_interface_results,
+                                    generate_indicators
+                                    ):
+
+    def write_outputs(nis_idempotent_file, df_indicators, df_interfaces):
+        def get_valid_name(original_name):
+            prefix = original_name[0] if original_name[0].isalpha() else "_"
+            remainder = original_name[1:] if original_name[0].isalpha() else original_name
+            return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
+
+        indicators_csv_file = output_dir + os.sep + f"indicators.csv"
+        if not os.path.isfile(indicators_csv_file):
+            df_indicators.to_csv(indicators_csv_file, index=False)
+        else:
+            df_indicators.to_csv(indicators_csv_file, index=False, mode='a', header=False)
+
+        if generate_nis_fragment_file:
+            with open(output_dir + os.sep + f"fragment_nis{get_valid_name(str(p_key))}.xlsx", "wb") as f:
+                f.write(nis_idempotent_file)
+
+        if generate_interface_results:
+            csv_name = output_dir + os.sep + f"fragment_interfaces{get_valid_name(str(p_key))}.csv"
+            if not df_interfaces.empty:
+                df_interfaces.to_csv(csv_name, index=False)
+            else:
+                with open(csv_name, "wt") as f:
+                    f.write("Could not obtain interface values (??)")
+
+        if generate_indicators:
+            csv_name = output_dir + os.sep + f"fragment_indicators{get_valid_name(str(p_key))}.csv"
+            if not df_indicators.empty:
+                df_indicators.to_csv(csv_name, index=False)
+            else:
+                with open(csv_name, "wt") as f:
+                    f.write("Could not obtain indicator values (??)")
+
+    p_key, f_metadata, f_processors = param
+    nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
+                                                                         f_metadata, f_processors,
+                                                                         tmp_out_dir)
+
+    write_outputs(nis_idempotent_file, df_indicators, df_interfaces)
 
 
 class Enviro:
@@ -163,11 +214,6 @@ class Enviro:
         :return:
         """
 
-        def get_valid_name(original_name):
-            prefix = original_name[0] if original_name[0].isalpha() else "_"
-            remainder = original_name[1:] if original_name[0].isalpha() else original_name
-            return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
-
         # Prepare Base
         serial_state = self._prepare_base(solve=False)
         output_dir = self._cfg["output_directory"]
@@ -178,51 +224,30 @@ class Enviro:
                 f.write(nis_file)
 
         tmp_output_dir = tempfile.gettempdir()
-        # Split in fragments, process each fragment separately
-        # Acumulate results
-        # indicators = []
-        indicators_csv_file = output_dir + os.sep + f"indicators.csv"
-        for i, (partial_key, fragment_metadata, fragment_processors) in enumerate(self._read_simulation_fragments()):
-            # fragment_metadata: dict with regions, years, scenarios in the fragment
-            # fragment_processors: list of processors with their attributes which will be interfaces
-            print(f"{partial_key}: {len(fragment_processors)}")
-            nis_idempotent_file, df_indicators, df_interfaces = process_fragment(serial_state, partial_key,
-                                                                                 fragment_metadata, fragment_processors,
-                                                                                 tmp_output_dir)
 
-            # Append indicators
-            # indicators.append(df_indicators)
-            if not os.path.isfile(indicators_csv_file):
-                df_indicators.to_csv(indicators_csv_file)
-            else:
-                df_indicators.to_csv(indicators_csv_file, mode='a', header=False)
+        # MAIN LOOP - Split simulation in totally independent fragments, and process it
+        if self._cfg["n_cpus"] == 1:
+            for i, (partial_key, frag_metadata, frag_processors) in enumerate(self._read_simulation_fragments()):
+                # fragment_metadata: dict with regions, years, scenarios in the fragment
+                # fragment_processors: list of processors with their attributes which will be interfaces
+                print(f"{partial_key}: {len(frag_processors)}")
+                parallelizable_process_fragment((partial_key, frag_metadata, frag_processors), serial_state, tmp_output_dir, output_dir,
+                                                generate_nis_fragment_file, generate_interface_results, generate_indicators)
 
-            if generate_nis_fragment_file:
+                if just_one_fragment:
+                    break
+        else:
+            n_cpus = self._cfg["n_cpus"]
+            # If 0 -> find appropriate number of CPUs to use
+            if n_cpus == 0:
+                n_cpus = int(0.8*cpu_count()) if cpu_count() > 4 else 2
 
-                with open(output_dir + os.sep + f"fragment_nis{get_valid_name(str(partial_key))}.xlsx", "wb") as f:
-                    f.write(nis_idempotent_file)
-
-            if generate_interface_results:
-                csv_name = output_dir + os.sep + f"fragment_interfaces{get_valid_name(str(partial_key))}.csv"
-                if not df_interfaces.empty:
-                    df_interfaces.to_csv(csv_name)
-                else:
-                    with open(csv_name, "wt") as f:
-                        f.write("Could not obtain interface values (??)")
-
-            if generate_indicators:
-                csv_name = output_dir + os.sep + f"fragment_indicators{get_valid_name(str(partial_key))}.csv"
-                if not df_indicators.empty:
-                    df_indicators.to_csv(csv_name)
-                else:
-                    with open(csv_name, "wt") as f:
-                        f.write("Could not obtain indicator values (??)")
-
-            if just_one_fragment:
-                break
-
-        # TODO Concat in a single DataFrame, save
-        # TODO Save indicators DataFrame as a single CSV file
+            p = Pool(n_cpus)
+            p.map(functools.partial(parallelizable_process_fragment, s_state=serial_state, tmp_out_dir=tmp_output_dir, output_dir=output_dir,
+                                    generate_nis_fragment_file=generate_nis_fragment_file,
+                                    generate_interface_results=generate_interface_results,
+                                    generate_indicators=generate_indicators),
+                  self._read_simulation_fragments())
 
     @deprecated  # Use "compute_indicators_from_base_and_simulation"
     def musiasem_indicators(self, system_per_country=True):
