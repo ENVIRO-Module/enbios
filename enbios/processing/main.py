@@ -370,6 +370,11 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
             # Scenario, Parameter, Value, Description
             lst.append([f"s{s}", "NISSolverObserversPriority", f"o{s}", f"Scenario s{s}, observer o{s}"])
         cmds.append(("ProblemStatement sim fragment", list_to_dataframe(lst)))
+        # RefProvenance
+        lst = [["RefID", "ProvenanceFileURL", "AgentType", "Agent", "Activities", "Entities"]]
+        for s in scenarios:
+            lst.append([f"o{s}", "", "Software", f"Sentinel simulation observer for scenario {s}", "WP4", ""])
+        cmds.append(("RefProvenance sim fragment", list_to_dataframe(lst)))
         # InterfaceTypes
         lst = [["InterfaceTypeHierarchy", "InterfaceType", "Sphere", "RoegenType", "ParentInterfaceType", "Formula",
                 "Description", "Unit", "OppositeSubsystemType", "Attributes"]]
