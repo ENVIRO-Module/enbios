@@ -7,6 +7,7 @@ A script to read a list of .spold files and obtain a NIS file with the following
 
 """
 import logging
+import operator
 import os
 import traceback
 
@@ -194,29 +195,32 @@ class SpoldToNIS:
                 sphere = "Technosphere" if r["type"].lower() != "biosphere" else "Biosphere"
                 interface_types[get_nis_name(r["name"])] = dict(comment=r.get("comment", ""), flow=r["flow"], sphere=sphere, unit=r["unit"], lci_name=r["name"])
             # Interfaces
-            tmp = df.groupby(['name']).sum()  # Acumulate (sum) repeated exchange names
+            names = {k: v for k, v in zip(df['name'].str.lower().values, df['name'].values)}
+            tmp = df.groupby([df['name'].str.lower()]).sum()  # Acumulate (sum) repeated exchange names
+            # Find main output
             main_output = None
+            main_output_is_output = True
             for idx, r in tmp.iterrows():
                 if r["amount"] == 1.0:
-                    main_output = get_nis_name(idx)
+                    main_output = get_nis_name(names[idx.lower()])
                     break
-            # Special activities can be scaled according to a -1 exchange (Nick clarified this)
             if main_output is None:
+                # Special activities can be scaled according to a -1 exchange (Nick clarified this)
                 for idx, r in tmp.iterrows():
                     if r["amount"] == -1.0:
-                        main_output = get_nis_name(idx)
+                        main_output = get_nis_name(names[idx.lower()])
+                        main_output_is_output = False
                         break
-
             if main_output is None:
                 main_output = default_output_interface
-            # Add output interface first
-            i_name = get_nis_name(main_output)
-            interfaces[(p_name, i_name)] = dict(value=1, relative_to="", is_output=True)
+            # Add interfaces, output interface first
+            i_name = get_nis_name(names.get(main_output, main_output))
+            interfaces[(p_name, i_name)] = dict(value=1, relative_to="", is_output=main_output_is_output)
             for idx, r in tmp.iterrows():
-                i_name = get_nis_name(idx)
+                i_name = get_nis_name(names[idx])
                 if (p_name, i_name) not in interfaces:
                     relative_to = main_output if i_name != main_output else ""
-                    value = r["amount"] if relative_to != "" else ""
+                    # value = r["amount"] if relative_to != "" else ""
                     interfaces[(p_name, i_name)] = dict(value=r["amount"], relative_to=relative_to,
                                                         is_output=i_name == main_output)
 
@@ -224,16 +228,19 @@ class SpoldToNIS:
         cmds = []
 
         # InterfaceTypes
-        lst = [["InterfaceTypeHierarchy", "InterfaceType", "Sphere", "RoegenType", "ParentInterfaceType", "Formula",
-                "Description", "Unit", "OppositeSubsystemType", "Attributes", "@EcoinventName"]]
+        header = ["InterfaceTypeHierarchy", "InterfaceType", "Sphere", "RoegenType", "ParentInterfaceType", "Formula",
+                  "Description", "Unit", "OppositeSubsystemType", "Attributes", "@EcoinventName"]
+        lst = []
         if default_output_interface != "":
-            lst.append(["lci", default_output_interface, "Technosphere", "Flow", "", "",
+            lst.append(["LCI", default_output_interface, "Technosphere", "Flow", "", "",
                         "Default-generic output for LCI activities which do not state explicitly its output interface",
                         "EJ", "", "", ""])
         for interface_type, props in interface_types.items():
             opposite = "Environment" if props["sphere"].lower() == "biosphere" else ""
-            lst.append(["lci", interface_type, props["sphere"], "Flow", "", "",
+            lst.append(["LCI", interface_type, props["sphere"], "Flow", "", "",
                         props["comment"], props["unit"], opposite, "", props["lci_name"]])
+        lst = sorted(lst, key=operator.itemgetter(1))
+        lst.insert(0, header)
         cmds.append(("InterfaceTypes", list_to_dataframe(lst)))
 
         # BareProcessors
@@ -242,7 +249,7 @@ class SpoldToNIS:
                 "Attributes", "@EcoinventName", "@EcoinventFilename", "@region"]]
         for processor, props in processors.items():
             spold_file = props["lca_file"]
-            lst.append(["", processor, "", "", "", "Structural", "No", "", "", "", "", "", "", props["name"], spold_file, ""])
+            lst.append(["EcoinventReferenceStructurals", processor, "", "", "", "Structural", "No", "", "", "", "", "", "", props["name"], spold_file, ""])
         cmds.append(("BareProcessors", list_to_dataframe(lst)))
 
         # Interfaces
