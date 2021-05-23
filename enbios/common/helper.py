@@ -1,6 +1,7 @@
 import copy
 import json
 import os
+import re
 import tempfile
 from io import BytesIO
 from typing import List, Union, BinaryIO
@@ -112,14 +113,21 @@ def set_zip_timestamp(in_zip: Union[os.PathLike, str, BinaryIO], timestamp=(2020
     return out_zip
 
 
+def get_valid_name(original_name):
+    prefix = original_name[0] if original_name[0].isalpha() else "_"
+    remainder = original_name[1:] if original_name[0].isalpha() else original_name
+    return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
+
+
 def prepare_base_state(base_url: str, solve: bool):
     from nexinfosys import initialize_configuration
     initialize_configuration()  # Needed to make download and NIS later work properly
     tmp_io = download_file(base_url)
     bytes_io = set_zip_timestamp(tmp_io)
     hash = hash_array(bytes_io.getvalue())
-    hash_file = f"{tempfile.gettempdir()}{os.sep}base.hash"
-    state_file = f"{tempfile.gettempdir()}{os.sep}base.state"
+    val_name = get_valid_name(base_url)
+    hash_file = f"{tempfile.gettempdir()}{os.sep}base.hash.{val_name}"
+    state_file = f"{tempfile.gettempdir()}{os.sep}base.state.{val_name}"
     if os.path.isfile(hash_file) and os.path.isfile(state_file):
         with open(hash_file, "rb") as f:
             cached_hash = f.read()
