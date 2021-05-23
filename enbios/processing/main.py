@@ -555,6 +555,11 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
     else:
         cloners = []
         clone_processors = []
+        # Also, modify all parent processors system to "r"
+        if len(fragment_metadata["regions"]) == 1:
+            r = next(iter(fragment_metadata["regions"]))
+            for p in base_musiasem_procs.values():
+                p.processor_system = r
 
     already_added_processors = set()
     already_added_lci = set()
