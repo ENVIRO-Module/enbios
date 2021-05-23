@@ -1,6 +1,7 @@
 import functools
 import os
 import re
+import time
 from multiprocessing import Pool, cpu_count
 
 import itertools
@@ -9,9 +10,9 @@ import tempfile
 import pandas as pd
 from typing import Tuple
 
-import sys
+from NamedAtomicLock import NamedAtomicLock
 from nexinfosys.common.decorators import deprecated
-from nexinfosys.common.helper import download_file, PartialRetrievalDictionary, any_error_issue
+from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue
 from nexinfosys.embedded_nis import NIS
 from nexinfosys.model_services import State
 from nexinfosys.models.musiasem_concepts import Processor
@@ -48,11 +49,17 @@ def parallelizable_process_fragment(param,
             remainder = original_name[1:] if original_name[0].isalpha() else original_name
             return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
 
-        indicators_csv_file = output_dir + os.sep + f"indicators.csv"
-        if not os.path.isfile(indicators_csv_file):
-            df_indicators.to_csv(indicators_csv_file, index=False)
-        else:
-            df_indicators.to_csv(indicators_csv_file, index=False, mode='a', header=False)
+        print("Writing results... --")
+        lock = NamedAtomicLock("enbios-lock")
+        lock.acquire()
+        try:
+            indicators_csv_file = output_dir + os.sep + f"indicators.csv"
+            if not os.path.isfile(indicators_csv_file):
+                df_indicators.to_csv(indicators_csv_file, index=False)
+            else:
+                df_indicators.to_csv(indicators_csv_file, index=False, mode='a', header=False)
+        finally:
+            lock.release()
 
         if generate_nis_fragment_file:
             with open(output_dir + os.sep + f"fragment_nis{get_valid_name(str(p_key))}.xlsx", "wb") as f:
@@ -73,13 +80,21 @@ def parallelizable_process_fragment(param,
             else:
                 with open(csv_name, "wt") as f:
                     f.write("Could not obtain indicator values (??)")
+        print("Writing done. ----- ")
 
     p_key, f_metadata, f_processors = param
+    print(f"Fragment processing...")
+    start = time.time()
+
     nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
                                                                          f_metadata, f_processors,
                                                                          tmp_out_dir)
 
+    end = time.time()
+    print(f"Fragment processed in {end - start} seconds ---------------------------------------")
     write_outputs(nis_idempotent_file, df_indicators, df_interfaces)
+    start = time.time()
+    print(f"Fragment outputs written in {start-end} seconds")
 
 
 class Enviro:
@@ -177,7 +192,8 @@ class Enviro:
         if split_by_scenario and len(scenarios) > 0:
             partition_lists.append([("_s", s) for s in scenarios])
 
-        for partition in list(itertools.product(*partition_lists)):
+        for i, partition in enumerate(list(itertools.product(*partition_lists))):
+            print("Fragment")
             partial_key = {t[0]: t[1] for t in partition}
             procs = prd.get(partial_key)
             # Sweep "procs" and update periods, regions, scenarios, models and carriers
