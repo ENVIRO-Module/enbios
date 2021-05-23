@@ -1,16 +1,15 @@
 import functools
+import logging
+import operator
 import os
-import re
 import time
 from multiprocessing import Pool, cpu_count
-
 import itertools
 import tempfile
-
 import pandas as pd
 from typing import Tuple
-
 from NamedAtomicLock import NamedAtomicLock
+
 from nexinfosys.common.decorators import deprecated
 from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue
 from nexinfosys.embedded_nis import NIS
@@ -18,7 +17,7 @@ from nexinfosys.model_services import State
 from nexinfosys.models.musiasem_concepts import Processor
 from nexinfosys.serialization import deserialize_state
 
-from enbios.common.helper import generate_workbook, hash_array, prepare_base_state, list_to_dataframe
+from enbios.common.helper import generate_workbook, prepare_base_state, list_to_dataframe, get_valid_name
 from enbios.input import Simulation
 from enbios.input.lci import LCIIndex
 # from enbios.input.simulators.calliope import CalliopeSimulation
@@ -44,11 +43,6 @@ def parallelizable_process_fragment(param,
                                     ):
 
     def write_outputs(nis_idempotent_file, df_indicators, df_interfaces):
-        def get_valid_name(original_name):
-            prefix = original_name[0] if original_name[0].isalpha() else "_"
-            remainder = original_name[1:] if original_name[0].isalpha() else original_name
-            return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
-
         print("Writing results... --")
         lock = NamedAtomicLock("enbios-lock")
         lock.acquire()
@@ -82,7 +76,7 @@ def parallelizable_process_fragment(param,
                     f.write("Could not obtain indicator values (??)")
         print("Writing done. ----- ")
 
-    p_key, f_metadata, f_processors = param
+    frag_label, p_key, f_metadata, f_processors = param
     print(f"Fragment processing...")
     start = time.time()
 
@@ -193,7 +187,6 @@ class Enviro:
             partition_lists.append([("_s", s) for s in scenarios])
 
         for i, partition in enumerate(list(itertools.product(*partition_lists))):
-            print("Fragment")
             partial_key = {t[0]: t[1] for t in partition}
             procs = prd.get(partial_key)
             # Sweep "procs" and update periods, regions, scenarios, models and carriers
@@ -210,7 +203,12 @@ class Enviro:
                     md["carriers"].add(p.attrs["carrier"])
                 tmp = set(p.attrs.keys()).difference(_idx_cols)
                 md["flows"].update(tmp)
-            yield partial_key, md, procs
+            # Return 4 items:
+            #  - a fragment label, to sort fragments
+            #  - an equivalent (to the label) dict
+            #  - fragment metadata
+            #  - the Processors (the data to process!)
+            yield ':'.join([f"{k}{v}" for k, v in partial_key.items()]), partial_key, md, procs
 
     def compute_indicators_from_base_and_simulation(self,
                                                     just_one_fragment: bool=False,
@@ -242,12 +240,14 @@ class Enviro:
         tmp_output_dir = tempfile.gettempdir()
 
         # MAIN LOOP - Split simulation in totally independent fragments, and process it
+        fragments = sorted([_ for _ in self._read_simulation_fragments()], key=operator.itemgetter(0))
+        logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
         if self._cfg["n_cpus"] == 1:
-            for i, (partial_key, frag_metadata, frag_processors) in enumerate(self._read_simulation_fragments()):
+            for i, (frag_label, partial_key, frag_metadata, frag_processors) in enumerate(fragments):
                 # fragment_metadata: dict with regions, years, scenarios in the fragment
                 # fragment_processors: list of processors with their attributes which will be interfaces
                 print(f"{partial_key}: {len(frag_processors)}")
-                parallelizable_process_fragment((partial_key, frag_metadata, frag_processors), serial_state, tmp_output_dir, output_dir,
+                parallelizable_process_fragment((frag_label, partial_key, frag_metadata, frag_processors), serial_state, tmp_output_dir, output_dir,
                                                 generate_nis_fragment_file, generate_interface_results, generate_indicators)
 
                 if just_one_fragment:
@@ -259,11 +259,13 @@ class Enviro:
                 n_cpus = int(0.8*cpu_count()) if cpu_count() > 4 else 2
 
             p = Pool(n_cpus)
-            p.map(functools.partial(parallelizable_process_fragment, s_state=serial_state, tmp_out_dir=tmp_output_dir, output_dir=output_dir,
+            p.map(functools.partial(parallelizable_process_fragment,
+                                    s_state=serial_state,
+                                    tmp_out_dir=tmp_output_dir, output_dir=output_dir,
                                     generate_nis_fragment_file=generate_nis_fragment_file,
                                     generate_interface_results=generate_interface_results,
                                     generate_indicators=generate_indicators),
-                  self._read_simulation_fragments())
+                  fragments)
 
     @deprecated  # Use "compute_indicators_from_base_and_simulation"
     def musiasem_indicators(self, system_per_country=True):
