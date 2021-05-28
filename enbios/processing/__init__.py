@@ -40,7 +40,6 @@ def read_parse_configuration(file_name) -> Dict:
                       "correspondence_files_path",
                       "simulation_type",
                       "simulation_files_path",
-                      "lci_data_locations",
                       "output_directory"]
     any_not_found = False
     for k in mandatory_keys:

@@ -39,7 +39,8 @@ def parallelizable_process_fragment(param,
                                     output_dir,
                                     generate_nis_fragment_file,
                                     generate_interface_results,
-                                    generate_indicators
+                                    generate_indicators,
+                                    max_lci_interfaces
                                     ):
 
     def write_outputs(nis_idempotent_file, df_indicators, df_interfaces):
@@ -82,7 +83,8 @@ def parallelizable_process_fragment(param,
 
     nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
                                                                          f_metadata, f_processors,
-                                                                         tmp_out_dir)
+                                                                         tmp_out_dir,
+                                                                         max_lci_interfaces)
 
     end = time.time()
     print(f"Fragment processed in {end - start} seconds ---------------------------------------")
@@ -98,8 +100,6 @@ class Enviro:
 
     def set_cfg_file_path(self, cfg_file_path):
         self._cfg = read_parse_configuration(cfg_file_path)
-        if "n_cpus" not in self._cfg:
-            self._cfg["n_cpus"] = 1
         self._cfg_file_path = cfg_file_path if isinstance(cfg_file_path, str) else None
 
     def _prepare_base(self, solve: bool):
@@ -211,11 +211,13 @@ class Enviro:
             yield ':'.join([f"{k}{v}" for k, v in partial_key.items()]), partial_key, md, procs
 
     def compute_indicators_from_base_and_simulation(self,
-                                                    just_one_fragment: bool=False,
-                                                    generate_nis_base_file: bool=False,
-                                                    generate_nis_fragment_file: bool=False,
-                                                    generate_interface_results: bool=False,
-                                                    generate_indicators: bool=False):
+                                                    just_one_fragment: bool = False,
+                                                    generate_nis_base_file: bool = False,
+                                                    generate_nis_fragment_file: bool = False,
+                                                    generate_interface_results: bool = False,
+                                                    generate_indicators: bool = False,
+                                                    max_lci_interfaces: int = 0,
+                                                    n_cpus: int = 1):
         """
         MAIN entry point of current ENVIRO
         Previously, a Base NIS must have been prepared, see @_prepare_base
@@ -225,6 +227,8 @@ class Enviro:
         :param generate_nis_fragment_file: True if the current fragment should be dumped into a NIS formatted XLSX file
         :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
         :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
+        :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
+        :param n_cpus: Number of CPUs of the local computer used to perform the process
         :return:
         """
 
@@ -242,18 +246,19 @@ class Enviro:
         # MAIN LOOP - Split simulation in totally independent fragments, and process it
         fragments = sorted([_ for _ in self._read_simulation_fragments()], key=operator.itemgetter(0))
         logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
-        if self._cfg["n_cpus"] == 1:
+        if n_cpus == 1:
             for i, (frag_label, partial_key, frag_metadata, frag_processors) in enumerate(fragments):
                 # fragment_metadata: dict with regions, years, scenarios in the fragment
                 # fragment_processors: list of processors with their attributes which will be interfaces
                 print(f"{partial_key}: {len(frag_processors)}")
-                parallelizable_process_fragment((frag_label, partial_key, frag_metadata, frag_processors), serial_state, tmp_output_dir, output_dir,
-                                                generate_nis_fragment_file, generate_interface_results, generate_indicators)
+                parallelizable_process_fragment((frag_label, partial_key, frag_metadata, frag_processors), serial_state,
+                                                tmp_output_dir, output_dir,
+                                                generate_nis_fragment_file, generate_interface_results,
+                                                generate_indicators, max_lci_interfaces)
 
                 if just_one_fragment:
                     break
         else:
-            n_cpus = self._cfg["n_cpus"]
             # If 0 -> find appropriate number of CPUs to use
             if n_cpus == 0:
                 n_cpus = int(0.8*cpu_count()) if cpu_count() > 4 else 2
@@ -264,7 +269,8 @@ class Enviro:
                                     tmp_out_dir=tmp_output_dir, output_dir=output_dir,
                                     generate_nis_fragment_file=generate_nis_fragment_file,
                                     generate_interface_results=generate_interface_results,
-                                    generate_indicators=generate_indicators),
+                                    generate_indicators=generate_indicators,
+                                    max_lci_interfaces=max_lci_interfaces),
                   fragments)
 
     @deprecated  # Use "compute_indicators_from_base_and_simulation"
@@ -345,7 +351,8 @@ def run_nis_for_indicators(nis_file_name, state):
     return nis_file, df_indicators, df_interfaces
 
 
-def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment_processors, output_directory):
+def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment_processors, output_directory,
+                     max_lci_interfaces):
     """
         Different assembly options
          * Dendrogram functional processors: a clone per region / a fragment per region (so no need to clone)
@@ -564,6 +571,7 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
     already_added_processors = set()
     already_added_lci = set()
     variables = dict()
+    max_lci_interfaces = 100000 if max_lci_interfaces == 0 else max_lci_interfaces
     # If not periods are defined, define a specific year. At least one is needed for the solver to run
     default_time = "2038" if len(fragment_metadata["periods"]) == 0 else "Year"
     for p in fragment_processors:  # Each Simulation processor
@@ -615,7 +623,7 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
                     continue
                 for cp in lci_matches:
                     for cont, i in enumerate(cp.factors):
-                        if cont >= 20:
+                        if cont >= max_lci_interfaces:
                             break  # Artificial limit to reduce file size, for test purposes
 
                         if not _interface_used_in_some_indicator(i.name):  # Economy of the model: avoid specifying interfaces not used later
@@ -649,17 +657,33 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
         return None, pd.DataFrame(), pd.DataFrame()
 
 
-
 if __name__ == '__main__':
-    t = Enviro()
-    _ = dict(nis_file_location="https://docs.google.com/spreadsheets/d/15NNoP8VjC2jlhktT0A8Y0ljqOoTzgar8l42E5-IRD90/edit#gid=839302943",
-             correspondence_files_path="",
-             simulation_type="sentinel",
-             simulation_files_path="/home/rnebot/Downloads/borrame/calliope-output/datapackage.json",
-             lci_data_locations={},
-             output_directory="/home/rnebot/Downloads/borrame/enviro-output/")
-    t.set_cfg_file_path(_)
-    t.compute_indicators_from_base_and_simulation()
+    base = "https://docs.google.com/spreadsheets/d/1ZXpxYLVO5BXoxLYeJkvfEiOpYxzNwVy01BmB1hnfNQ0/edit?usp=sharing"  # "Copy of Enviro-Sentinel-Base for Script Development"
+    base = "https://docs.google.com/spreadsheets/d/15NNoP8VjC2jlhktT0A8Y0ljqOoTzgar8l42E5-IRD90/edit?usp=sharing"  # Base full
+    # base = "https://docs.google.com/spreadsheets/d/1nYzphq1XYrezquW3yj7UiJ8sNJ8RzJ8gqErg3oVmw2Q/edit?usp=sharing"  # Base with only 1 processor
+    frag_file = "/tmp/tmp2huk3hdy"  # "/tmp/tmpp4shvdiw"
+    frag_file = "/home/rnebot/Downloads/simple_relative_to.xlsx"
+    frag_file = ""
+    if os.path.exists(frag_file):
+        # state = deserialize_state(prepare_base_state(base, solve=False))
+        state = None
+        file, df1, df2 = run_nis_for_indicators(frag_file, state)
+        df1.to_csv("~/Downloads/df1.csv", index=False)
+        df2.to_csv("~/Downloads/df2.csv", index=False)
+    else:
+        t = Enviro()
+        _ = dict(nis_file_location=base,
+                 correspondence_files_path="",
+                 simulation_type="sentinel",
+                 simulation_files_path="/home/rnebot/Downloads/borrame/calliope-output/datapackage.json",
+                 lci_data_locations={},
+                 output_directory="/home/rnebot/Downloads/borrame/enviro-output/")
+        t.set_cfg_file_path(_)
+        t.compute_indicators_from_base_and_simulation(just_one_fragment=True,
+                                                      generate_nis_base_file=True,
+                                                      generate_nis_fragment_file=True,
+                                                      generate_interface_results=True,
+                                                      generate_indicators=True,
+                                                      max_lci_interfaces=0,
+                                                      n_cpus=1)
     print("Done")
-
-

@@ -19,6 +19,7 @@
 #
 # INSTALL   ------------------------------------------------------------------------------
 #
+# Local    : python setup.py install
 # PyPI test: pip install --index-url https://test.pypi.org/simple/ --upgrade enbios
 # PyPI     : pip install --upgrade enbios
 # No PyPI  : pip install -e <local path where "setup.py" (this file) is located>
@@ -36,7 +37,7 @@ twine upload --skip-existing dist/*
 """
 
 package_name = 'enbios'
-version = '0.14'
+version = '0.16'
 
 
 def parse_requirements(strs):
