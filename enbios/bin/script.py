@@ -3,6 +3,7 @@ import os
 import fire
 
 from enbios.input.data_preparation.lci_to_nis import lci_to_interfaces_csv, SpoldToNIS
+from enbios.input.data_preparation.lcia_implementation_to_nis import convert_lcia_implementation_to_nis
 from enbios.input.data_preparation.recipe_to_nis import convert_recipe_to_nis
 from enbios.input.data_preparation.sentinel_to_nis_prep import sentinel_to_prep_file
 from enbios.processing.main import Enviro
@@ -27,7 +28,7 @@ enbios (same as previous)
 """
 
 
-class EnbiosCLI:
+class Enbios:
     def recipe_to_csv(self, recipe_file: str, lcia_file: str):
         """
         Convert an XLSX file with ReCiPe2016 to a CSV file ready to be declared in a DatasetDef which can be imported
@@ -42,6 +43,22 @@ class EnbiosCLI:
         :return:
         """
         convert_recipe_to_nis(recipe_file, lcia_file)
+
+    def lcia_implementation_to_csv(self, lcia_implementation_file: str, lcia_file: str):
+        """
+        Convert an XLSX file with LCIA implementation (from Ecoinvent) to a CSV file ready to be declared in a
+        DatasetDef which can later be imported in a "LCIAMethod" command
+
+        Example:
+           enbios lcia_implementation_to_csv /home/rnebot/GoogleDrive/AA_SENTINEL/LCIA_implementation_3.7.1.xlsx /home/rnebot/GoogleDrive/AA_SENTINEL/case_studies/library/lcia_implementation_nis.csv
+
+
+        :param lcia_implementation_file: The full path of the input LCIA implementation XLSX file
+        :param lcia_file: The full path of the output CSV file
+        :return:
+        """
+        convert_lcia_implementation_to_nis(lcia_implementation_file, lcia_file)
+
 
     # def lci_to_interface_types(self, lci_file_path: str, csv_file: str):
     #     """
@@ -133,7 +150,7 @@ class EnbiosCLI:
 def main():
     import platform
     os.environ["PAGER"] = "cat" if platform.system().lower() != "windows" else "-"
-    fire.Fire(EnbiosCLI)
+    fire.Fire(Enbios)
 
 
 if __name__ == '__main__':
