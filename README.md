@@ -19,12 +19,12 @@ The related python package [`enbios`](https://pypi.org/project/enbios/) takes da
 
 More information on the roots of the framework can be found in [Deliverable 2.2]() 
 
-###Data inputs
+### Data inputs
 - Data on electricity production and power capacity structured by the [`friendly_data`](https://pypi.org/project/friendly-data/) package. 
 - LCA inventories in .spold format
 - Impact assessment methods in excel or csv format
 
-###Outputs 
+### Outputs 
 For each energy function and technology:
 - Environmental impact indicators from the most used LCIA methods (Recipe2016, CML, AWARE, etc.)
 - Metabolism indicators in rates of energy or materials per hour of human activity, power capacity and land use 
@@ -43,19 +43,18 @@ For each energy function and technology:
 - High level methods to quickly obtain/refresh analyses
 
 
-##Getting started
-### Installing "enbios"
+## Installing "enbios"
 
 The python package can be installed with the following two methods:
 
-#### pip package
+### pip package
 
 * Set a Python environment
 * Install the package:
 
 `pip install enbios`
 
-#### Source code
+### Source code
 
 Clone Github repository and execute "python setup.py install":
 
