@@ -1,6 +1,7 @@
 # ONE TIME  -----------------------------------------------------------------------------
 #
-# pip install --upgrade setuptools wheel twine
+# in terminal
+# # pip install --upgrade setuptools wheel twine
 #
 # Create account:
 # PyPI test: https://test.pypi.org/account/register/
@@ -10,8 +11,11 @@
 #
 # Modify version code in "setup.py" (this file)
 #
+# in python console
 # Build (cd to directory where "setup.py" is)
-# python3 setup.py sdist bdist_wheel
+# # import os
+# # os.getcwd()
+# python3 setup.py sdist bdist_wheel (is this code? It return error)
 #
 # Upload:
 # PyPI test: twine upload --skip-existing --repository-url https://test.pypi.org/legacy/ dist/*
