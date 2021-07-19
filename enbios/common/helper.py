@@ -52,13 +52,25 @@ def list_to_dataframe(lst: List) -> pd.DataFrame:
     return pd.DataFrame(data=lst[1:], columns=lst[0])
 
 
-def generate_workbook(cmds):
+def get_scenario_name(prefix, s):
+    def is_int(si):
+        try:
+            int(si)
+            return True
+        except ValueError:
+            return False
+
+    return f"{prefix}{s}" if is_int(s) else str(s)
+
+
+def generate_workbook(cmds, generate_empty=False):
     # Convert list of pd.DataFrames to Excel workbook
     wb = Workbook(write_only=True)
     ws_count = 0
     for name, df in cmds:
         if df.shape[0] == 0:
-            continue
+            if not generate_empty:
+                continue
 
         ws_count += 1
         ws = wb.create_sheet(name)
@@ -119,15 +131,17 @@ def get_valid_name(original_name):
     return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
 
 
-def prepare_base_state(base_url: str, solve: bool):
+def prepare_base_state(base_url: str, solve: bool, directory: str = None):
     from nexinfosys import initialize_configuration
     initialize_configuration()  # Needed to make download and NIS later work properly
     tmp_io = download_file(base_url)
     bytes_io = set_zip_timestamp(tmp_io)
     hash = hash_array(bytes_io.getvalue())
     val_name = get_valid_name(base_url)
-    hash_file = f"{tempfile.gettempdir()}{os.sep}base.hash.{val_name}"
-    state_file = f"{tempfile.gettempdir()}{os.sep}base.state.{val_name}"
+    if directory is None:
+        directory = tempfile.gettempdir()
+    hash_file = f"{directory}{os.sep}base.hash.{val_name}"
+    state_file = f"{directory}{os.sep}base.state.{val_name}"
     if os.path.isfile(hash_file) and os.path.isfile(state_file):
         with open(hash_file, "rb") as f:
             cached_hash = f.read()
@@ -136,7 +150,7 @@ def prepare_base_state(base_url: str, solve: bool):
         update = True
 
     if update:
-        temp_name = tempfile.NamedTemporaryFile(dir=tempfile.gettempdir(), delete=False)
+        temp_name = tempfile.NamedTemporaryFile(dir=directory, delete=False)
         temp_name = temp_name.name
         with open(temp_name, "wb") as f:
             f.write(bytes_io.getvalue())
