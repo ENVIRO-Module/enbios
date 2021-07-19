@@ -8,9 +8,9 @@ from typing import Dict
 
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
-from enbios.common.helper import list_to_dataframe
+from enbios.common.helper import list_to_dataframe, get_scenario_name
 from enbios.input import Simulation
-from enbios.model import ProcessorAttributes
+from enbios.model import SimStructuralProcessorAttributes
 from friendly_data.dpkg import read_pkg
 from friendly_data.converters import to_df
 
@@ -42,18 +42,22 @@ class SentinelSimulation(Simulation):
         times = set()
         techs = set()
         carriers = set()
-        col_types = set()
-        ct = set()
+        units = set()
+        col_types = set()  # Interface types
+        ctc = set()  # Country - Tech - Carrier
         pkg = read_pkg(self._sentinel_index_path)
         prd = PartialRetrievalDictionary()
         for res in pkg.resources:
             df = to_df(res)
             col_types.update(df.columns)
             region_idx = df.index.names.index("region") if "region" in df.index.names else -1
-            carrier_idx = df.index.names.index("carrier") if "carrier" in df.index.names else -1
+            carrier_name = "carrier" if "carrier" in df.index.names else "carriers" if "carriers" in df.index.names else None
+            carrier_idx = df.index.names.index(carrier_name) if carrier_name is not None else -1
             tech_idx = df.index.names.index("technology") if "technology" in df.index.names else -1
+
             scenario_idx = df.index.names.index("scenario") if "scenario" in df.index.names else -1
             time_idx = df.index.names.index("year") if "year" in df.index.names else -1
+            unit_idx = df.index.names.index("unit") if "unit" in df.index.names else -1
             for idx, cols in df.iterrows():
                 if not isinstance(idx, tuple):  # When it is not a MultiIndex, Pandas has "idx" to not be a Tuple; workaround: convert into a Tuple of a single element
                     idx = (idx,)
@@ -61,7 +65,8 @@ class SentinelSimulation(Simulation):
                 carrier = idx[carrier_idx] if carrier_idx >= 0 else None
                 tech = idx[tech_idx] if tech_idx >= 0 else None
                 scenario = idx[scenario_idx] if scenario_idx >= 0 else None
-                time_ = idx[time_idx] if time_idx >= 0 else None
+                time_ = str(idx[time_idx]) if time_idx >= 0 else None
+                unit_ = idx[unit_idx] if unit_idx >= 0 else None
                 if region:
                     regions.add(region)
                 if carrier:
@@ -73,22 +78,24 @@ class SentinelSimulation(Simulation):
                 if tech:
                     techs.add(tech)
                 if tech and region:
-                    ct.add((tech, region))
+                    ctc.add((tech, region, carrier))  # Carrier can be None
+                if unit_:
+                    units.add(unit_)
                 if not region and not scenario and not time_:
                     region = scenario = time_ = "-"
                 # -- Add COLS information --
                 # (tech, region, scenario, time) - (cols)
-                k = ProcessorAttributes.partial_key(tech, region, scenario, time_)
+                k = SimStructuralProcessorAttributes.partial_key(tech, region, carrier, scenario, time_)
                 o = prd.get(k)
                 if len(o) == 0:
-                    pa = ProcessorAttributes(tech, region, scenario, time_)
+                    pa = SimStructuralProcessorAttributes(tech, region, carrier, scenario, time_)
                     prd.put(k, pa)
                 elif len(o) == 1:
                     pa = o[0]
                 else:
-                    raise Exception(f"Found {len(o)} occurrences of ProcessorAttributes: {k}")
-                pa.attrs.update({k: cols[k] for k in df.columns})
-        return prd, scenarios, regions, times, techs, carriers, col_types, ct
+                    raise Exception(f"Found {len(o)} occurrences of SimStructuralProcessorAttributes: {k}")
+                pa.attrs.update({k: cols[k] for k in df.columns})  # Add variables from current pd.DataFrame
+        return prd, scenarios, regions, times, techs, carriers, units, col_types, ctc
 
     def generate_template_data(self):
         """
@@ -96,24 +103,34 @@ class SentinelSimulation(Simulation):
         to help in producing "correspondence"
         :return:
         """
-        prd, scenarios, regions, times, techs, carriers, col_types, ct = self.read("")
+        prd, scenarios, regions, times, techs, carriers, units, col_types, ct = self.read("")
 
         cmds = []
         # Not NIS
         lst = [["technology", "calliope_technology_type"]]
         for t in techs:
             lst.append([t, ""])
-        cmds.append(("Enbios Technology Types", list_to_dataframe(lst)))
+        cmds.append(("Simulation Technology Types", list_to_dataframe(lst)))
 
         lst = [["region"]]
         for r in regions:
             lst.append([r])
-        cmds.append(("Enbios Regions", list_to_dataframe(lst)))
+        cmds.append(("Simulation Regions", list_to_dataframe(lst)))
 
         lst = [["carrier"]]
         for r in carriers:
             lst.append([r])
-        cmds.append(("Enbios Carriers", list_to_dataframe(lst)))
+        cmds.append(("Simulation Carriers", list_to_dataframe(lst)))
+
+        lst = [["period"]]
+        for r in times:
+            lst.append([r])
+        cmds.append(("Simulation Times", list_to_dataframe(lst)))
+
+        lst = [["unit"]]
+        for r in units:
+            lst.append([r])
+        cmds.append(("Simulation Units", list_to_dataframe(lst)))
 
         lst = [["name", "region", "match_target_type", "match_target", "weight", "match_conditions"]]
         for t in techs:
@@ -144,7 +161,9 @@ class SentinelSimulation(Simulation):
         lst = [["Scenario", "Parameter", "Value", "Description"]]
         for s in scenarios:
             # Scenario, Parameter, Value, Description
-            lst.append([f"s{s}", "NISSolverObserversPriority", f"o{s}", f"Scenario s{s}, observer o{s}"])
+            scenario = get_scenario_name("s", s)
+            observer = get_scenario_name("o", s)
+            lst.append([scenario, "NISSolverObserversPriority", observer, f"Scenario {scenario}, observer {observer}"])
         cmds.append(("ProblemStatement", list_to_dataframe(lst)))
 
         # Processors, Interfaces and "Cloners"
@@ -157,33 +176,49 @@ class SentinelSimulation(Simulation):
              "Assessment", "PedigreeMatrix", "Pedigree", "Time", "Source", "NumberAttributes", "Comments"]]
         cloners = [["InvokingProcessor", "RequestedProcessor", "ScalingType", "InvokingInterface",
                     "RequestedInterface", "Scale"]]
+        country_level_procs_already_added = set()
+        tech_procs_already_added = set()
+        system_per_region = False
         for t in ct:
-            o = prd.get(ProcessorAttributes.partial_key(t[0], t[1]))
+            o = prd.get(SimStructuralProcessorAttributes.partial_key(t[0], t[1]))
             if len(o) > 0:
+                parent = ""  # TODO
                 if t[1]:  # Region
                     name = f"ES_{t[1]}"
-                    processors.append(["<pgroup>", name, "", "", "<system>", "Functional", "Yes", "",
-                                       f"Country level processor, {t[1]}", "", "", "", "", t[1], t[1]])
-                    # Clone (clone dendrogram inside "region" processor)
-                    # TODO InvokingInterface, RequestedInterface, Scale are mandatory; specify something here
-                    cloners.append((name, "EnergySector", "Clone", "", "", ""))
+                    parent = name
+                    system = t[1] if system_per_region else ""
+                    if name not in country_level_procs_already_added:
+                        processors.append(["", name, "", "", system, "Functional", "Yes", "",
+                                           f"Country level processor, {t[1]}", "", "", "", "", t[1], t[1]])
+                        # Clone (clone dendrogram inside "region" processor)
+                        # TODO InvokingInterface, RequestedInterface, Scale are mandatory; specify something here
+                        cloners.append((name, "EnergySector", "Clone", "", "", ""))
+                        country_level_procs_already_added.add(name)
+                else:
+                    system = ""
                 # BareProcessors
-                o1 = prd.get_one(ProcessorAttributes.partial_key(t[0], "-", "-", "-"), full_key=True)
+                o1 = o[0]  # prd.get(ProcessorAttributes.partial_key(t[0], t[1]), full_key=True)[0]
                 original_name = t[0]
                 name = get_nis_name(t[0])
-                parent = None  # TODO
-                description = f'{o1.attrs["description"]} at {t[1]}'
-                # TODO FULL NAME?
-                processors.append(["<pgroup>", name, parent, "", "system", "Structural", "Yes", "",
+                full_name = f"{parent}{'.' if parent!='' else ''}{name}"
+                if name not in tech_procs_already_added:
+                    add = True
+                else:
+                    add = False
+
+                # Technology (structural) processor
+                description = f'{o1.attrs.get("description", name)} at {t[1]}'
+                processors.append(["", name, parent, "", system, "Structural", "Yes", "",
                                    description, "", "", "", "", original_name, t[1]])
+                # Add observations (Interfaces)
                 for p in o:
-                    scenario = ""
+                    observer = ""
                     time_ = "Year"
-                    name = ""
+                    # name = ""
                     region = ""
                     _ = p.attrs.copy()
                     if "scenario" in p.attrs:
-                        scenario = "o" + p.attrs["scenario"]
+                        observer = get_scenario_name("o", p.attrs["scenario"])
                         del _["scenario"]
                     if "technology" in p.attrs:
                         name_ = p.attrs["technology"]
@@ -191,12 +226,16 @@ class SentinelSimulation(Simulation):
                     if "region" in p.attrs:
                         region = p.attrs["region"]
                         del _["region"]
-                    if "year" in p.attrs:
-                        time_ = p.attrs["year"]
-                        del _["year"]
+                    if "year" in p.attrs or "time" in p.attrs:
+                        if "year" in p.attrs:
+                            time_ = p.attrs["year"]
+                            del _["year"]
+                        else:
+                            time_ = p.attrs["time"]
+                            del _["time"]
                     for k, v in _.items():
-                        interfaces.append([name, k, "", "Technosphere", "Flow", "<orientation>", "", "", "", "", v,
-                                           "", "<relative_to>", "", "", "", "", time_, scenario, "", ""])
+                        interfaces.append([full_name, k, "", "Technosphere", "Flow", "<orientation>", "", "", "", "", v,
+                                           "", "<relative_to>", "", "", "", "", time_, observer, "", ""])
 
         cmds.append(("BareProcessors", list_to_dataframe(processors)))
         cmds.append(("ProcessorScalings", list_to_dataframe(cloners)))
