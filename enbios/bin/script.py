@@ -1,18 +1,12 @@
 # /usr/bin/env python
 import os
 import fire
-
-from enbios.input.data_preparation.lci_to_nis import lci_to_interfaces_csv, SpoldToNIS
+from nexinfosys.bin.cli_script import set_log_level_from_cli_param
+from enbios.input.data_preparation.lci_to_nis import SpoldToNIS
 from enbios.input.data_preparation.lcia_implementation_to_nis import convert_lcia_implementation_to_nis
 from enbios.input.data_preparation.recipe_to_nis import convert_recipe_to_nis
 from enbios.input.data_preparation.sentinel_to_nis_prep import sentinel_to_prep_file
 from enbios.processing.main import Enviro
-
-"""
-* Action to prepare a NIS file. Output issues (console), output state (to a file and hash)
-
-
-"""
 
 """
 DEVELOPMENT CLI EXECUTION:
@@ -29,7 +23,8 @@ enbios (same as previous)
 
 
 class Enbios:
-    def recipe_to_csv(self, recipe_file: str, lcia_file: str):
+    @staticmethod
+    def recipe_to_csv(recipe_file: str, lcia_file: str, log: str = None):  # TODO DEPRECATED, use "lcia_implementation_to_csv"
         """
         Convert an XLSX file with ReCiPe2016 to a CSV file ready to be declared in a DatasetDef which can be imported
         in a "LCIAMethod" command
@@ -40,11 +35,14 @@ class Enbios:
 
         :param recipe_file: The full path of the input ReCiPe2016 XLSX file
         :param lcia_file: The full path of the output CSV file
+        :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :return:
         """
+        set_log_level_from_cli_param(log)
         convert_recipe_to_nis(recipe_file, lcia_file)
 
-    def lcia_implementation_to_csv(self, lcia_implementation_file: str, lcia_file: str):
+    @staticmethod
+    def lcia_implementation_to_csv(lcia_implementation_file: str, lcia_file: str, log: str = None):
         """
         Convert an XLSX file with LCIA implementation (from Ecoinvent) to a CSV file ready to be declared in a
         DatasetDef which can later be imported in a "LCIAMethod" command
@@ -55,10 +53,11 @@ class Enbios:
 
         :param lcia_implementation_file: The full path of the input LCIA implementation XLSX file
         :param lcia_file: The full path of the output CSV file
+        :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :return:
         """
+        set_log_level_from_cli_param(log)
         convert_lcia_implementation_to_nis(lcia_implementation_file, lcia_file)
-
 
     # def lci_to_interface_types(self, lci_file_path: str, csv_file: str):
     #     """
@@ -70,8 +69,9 @@ class Enbios:
     #     """
     #     lci_to_interfaces_csv(lci_file_path, csv_file)
 
-    def lci_to_nis(self, spold_files_folder: str, correspondence_path: str,
-                   nis_base_url: str, nis_structurals_base_path: str):
+    @staticmethod
+    def lci_to_nis(spold_files_folder: str, correspondence_path: str,
+                   nis_base_url: str, nis_structurals_base_path: str, log: str = None):
         """
         Scan correspondence file AND a NIS file to extract a NIS file with the commands:
            - InterfaceTypes
@@ -92,12 +92,15 @@ class Enbios:
         :param correspondence_path: Correspondence file
         :param nis_base_url: URL of a NIS file that will be used as Base for the assembly of the model
         :param nis_structurals_base_path: File name of the output NIS that will contain the structural processors
+        :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :return:
         """
+        set_log_level_from_cli_param(log)
         s2n = SpoldToNIS()
         s2n.spold2nis("generic_energy_production", spold_files_folder, correspondence_path, nis_base_url, nis_structurals_base_path)
 
-    def sentinel_to_nis_preparatory(self, sentinel_data_package_json_path: str, nis_file: str):
+    @staticmethod
+    def sentinel_to_nis_preparatory(sentinel_data_package_json_path: str, nis_file: str, log: str = None):
         """
         Read a Sentinel Data Package and elaborate an XLSX file with NIS commands and complementary information
         describing what is inside the Sentinel Package (enumeration of Scenarios, Regions, etc.) and a template of
@@ -105,18 +108,23 @@ class Enbios:
 
         :param sentinel_data_package_json_path: The full path of the JSON file describing a Sentinel data package
         :param nis_file: Full path of the output XLSX NIS formatted file
+        :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :return:
         """
+        set_log_level_from_cli_param(log)
         sentinel_to_prep_file(sentinel_data_package_json_path, nis_file)
 
-    def enviro(self, cfg_file_path,
+    @staticmethod
+    def enviro(cfg_file_path,
                just_one_fragment: bool = False,
                generate_nis_base_file: bool = False,
                generate_nis_fragment_file: bool = False,
                generate_interface_results: bool = False,
                generate_indicators: bool = False,
                max_lci_interfaces: int = 0,
-               n_cpus: int = 1):
+               n_cpus: int = 1,
+               log: str = None,
+               just_prepare_base: bool = False):
         """
         The main function of the package, reads the contents of the configuration file, which can be either a JSON or YAML
         file. Following an example of YAML file contents:
@@ -136,15 +144,19 @@ class Enbios:
         :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
         :param n_cpus: Number of CPUs of the local computer used to perform the process (default 1, sequential)
+        :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
+        :param just_prepare_base: True to only preparing Base file and exit
         :return:
         """
+        set_log_level_from_cli_param(log)
         t = Enviro()
         t.set_cfg_file_path(cfg_file_path)
         t.compute_indicators_from_base_and_simulation(just_one_fragment, generate_nis_base_file,
                                                       generate_nis_fragment_file,
                                                       generate_interface_results, generate_indicators,
                                                       max_lci_interfaces,
-                                                      n_cpus)
+                                                      n_cpus,
+                                                      just_prepare_base)
 
 
 def main():
