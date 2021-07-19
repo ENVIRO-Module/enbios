@@ -2,48 +2,75 @@ import functools
 import logging
 import operator
 import os
+
+import sys
 import time
 from multiprocessing import Pool, cpu_count
 import itertools
 import tempfile
 import pandas as pd
-from typing import Tuple
+from typing import Tuple, Dict, Set, List
 from NamedAtomicLock import NamedAtomicLock
 
-from nexinfosys.common.decorators import deprecated
-from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue
+from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue, strcmp
 from nexinfosys.embedded_nis import NIS
 from nexinfosys.model_services import State
-from nexinfosys.models.musiasem_concepts import Processor
+from nexinfosys.models.musiasem_concepts import Processor, ProcessorsRelationPartOfObservation
 from nexinfosys.serialization import deserialize_state
 
-from enbios.common.helper import generate_workbook, prepare_base_state, list_to_dataframe, get_valid_name
+from enbios.common.helper import generate_workbook, prepare_base_state, list_to_dataframe, get_valid_name, \
+    get_scenario_name
 from enbios.input import Simulation
 from enbios.input.lci import LCIIndex
 # from enbios.input.simulators.calliope import CalliopeSimulation
 from enbios.input.simulators.sentinel import SentinelSimulation
+from enbios.model import SimStructuralProcessorAttributes
 from enbios.processing import read_parse_configuration, read_submit_solve_nis_file
-from enbios.processing.model_merger import Matcher, merge_models
+from enbios.processing.model_merger import Matcher
 
 
 #####################################################
 # MAIN ENTRY POINT  #################################
 #####################################################
 _idx_cols = ["region", "scenario", "technology", "model", "carrier",
-             "year", "timestep", "unit", "variable", "description"]
+             "year", "time", "timestep", "unit", "variable", "description"]
 
 
-def parallelizable_process_fragment(param,
-                                    s_state,
-                                    tmp_out_dir,
-                                    output_dir,
-                                    generate_nis_fragment_file,
-                                    generate_interface_results,
-                                    generate_indicators,
-                                    max_lci_interfaces
+def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
+                                                 Dict[str, str],  # Fragment dict
+                                                 Dict[str, Set[str]],  #
+                                                 List[SimStructuralProcessorAttributes]],
+                                    s_state: bytes,
+                                    tmp_out_dir: str,
+                                    output_dir: str,
+                                    generate_nis_fragment_file: bool,
+                                    generate_interface_results: bool,
+                                    generate_indicators: bool,
+                                    max_lci_interfaces: int
                                     ):
+    """
+    Prepares a NIS file from inputs and submits it to NIS for accounting and calculation of indicators
+
+    :param param: A Tuple with the information to drive the process
+    :param s_state: A "bytes" with Serialized state (deserialized inside)
+    :param tmp_out_dir: Working directory
+    :param output_dir: Outputs directory
+    :param generate_nis_fragment_file: True to generate a NIS file for the fragment
+    :param generate_interface_results: True to generate a NIS file with the values of interfaces after solving
+    :param generate_indicators: True to generate a file with all indicators
+    :param max_lci_interfaces: If >0, cut the LCI interfaces used to that number
+    :return:
+    """
 
     def write_outputs(nis_idempotent_file, df_indicators, df_interfaces):
+        """
+        Write results of a submission to output directory
+
+        :param nis_idempotent_file:
+        :param df_indicators:
+        :param df_interfaces:
+        :return:
+        """
         print("Writing results... --")
         lock = NamedAtomicLock("enbios-lock")
         lock.acquire()
@@ -77,19 +104,21 @@ def parallelizable_process_fragment(param,
                     f.write("Could not obtain indicator values (??)")
         print("Writing done. ----- ")
 
-    frag_label, p_key, f_metadata, f_processors = param
+    # Starts here
+    frag_label, p_key, f_metadata, f_processors = param  # Unpack "param"
     print(f"Fragment processing...")
-    start = time.time()
+    start = time.time()  # Time execution
 
+    # Call main function
     nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
                                                                          f_metadata, f_processors,
                                                                          tmp_out_dir,
                                                                          max_lci_interfaces)
 
-    end = time.time()
+    end = time.time()  # Stop timing
     print(f"Fragment processed in {end - start} seconds ---------------------------------------")
     write_outputs(nis_idempotent_file, df_indicators, df_interfaces)
-    start = time.time()
+    start = time.time()  # Time also output writing
     print(f"Fragment outputs written in {start-end} seconds")
 
 
@@ -101,13 +130,6 @@ class Enviro:
     def set_cfg_file_path(self, cfg_file_path):
         self._cfg = read_parse_configuration(cfg_file_path)
         self._cfg_file_path = cfg_file_path if isinstance(cfg_file_path, str) else None
-
-    def _prepare_base(self, solve: bool):
-        """
-
-        :return:
-        """
-        return prepare_base_state(self._cfg["nis_file_location"], solve)
 
     def _get_simulation(self) -> Simulation:
         # Simulation
@@ -174,9 +196,10 @@ class Enviro:
         # regions: list of regions
         # times: list of time periods
         # carriers: list of carriers
+        # units: list of units
         # col_types: list of value (not index) fields
-        # ct: list of pairs (tech, region)
-        prd, scenarios, regions, times, techs, carriers, col_types, ct = simulation.read("")
+        # ctc: list of pairs (tech, region, carrier)
+        prd, scenarios, regions, times, techs, carriers, units, col_types, ctc = simulation.read("")
 
         partition_lists = []
         if split_by_region and len(regions) > 0:
@@ -195,8 +218,11 @@ class Enviro:
                 md["regions"].add(p.attrs["region"])
                 md["scenarios"].add(p.attrs["scenario"])
                 md["techs"].add(p.attrs["technology"])
-                if "year" in p.attrs:
-                    md["periods"].add(p.attrs["year"])
+                if "year" in p.attrs or "time" in p.attrs:
+                    if "year" in p.attrs:
+                        md["periods"].add(p.attrs["year"])
+                    else:
+                        md["periods"].add(p.attrs["time"])
                 if "model" in p.attrs:
                     md["models"].add(p.attrs["model"])
                 if "carrier" in p.attrs:
@@ -217,7 +243,8 @@ class Enviro:
                                                     generate_interface_results: bool = False,
                                                     generate_indicators: bool = False,
                                                     max_lci_interfaces: int = 0,
-                                                    n_cpus: int = 1):
+                                                    n_cpus: int = 1,
+                                                    just_prepare_base: bool = False):
         """
         MAIN entry point of current ENVIRO
         Previously, a Base NIS must have been prepared, see @_prepare_base
@@ -229,13 +256,19 @@ class Enviro:
         :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
         :param n_cpus: Number of CPUs of the local computer used to perform the process
+        :param just_prepare_base: True to only preparing Base file and exit
         :return:
         """
 
-        # Prepare Base
-        serial_state = self._prepare_base(solve=False)
         output_dir = self._cfg["output_directory"]
         os.makedirs(output_dir, exist_ok=True)
+
+        # Prepare Base
+        serial_state = prepare_base_state(self._cfg["nis_file_location"], False, self._cfg["output_directory"])
+        if just_prepare_base:
+            print("Base prepared, exiting because 'just_prepare_base == True'")
+            sys.exit(1)
+
         if generate_nis_base_file:
             nis_file, _, _ = run_nis_for_indicators(None, deserialize_state(serial_state))
             with open(output_dir+os.sep+"nis_base.idempotent.xlsx", "wb") as f:
@@ -243,10 +276,10 @@ class Enviro:
 
         tmp_output_dir = tempfile.gettempdir()
 
-        # MAIN LOOP - Split simulation in totally independent fragments, and process it
+        # MAIN LOOP - Split simulation in independent fragments, and process them
         fragments = sorted([_ for _ in self._read_simulation_fragments()], key=operator.itemgetter(0))
         logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
-        if n_cpus == 1:
+        if n_cpus == 1:  # Serial execution (anyway, using the parallel processing function, valid for both)
             for i, (frag_label, partial_key, frag_metadata, frag_processors) in enumerate(fragments):
                 # fragment_metadata: dict with regions, years, scenarios in the fragment
                 # fragment_processors: list of processors with their attributes which will be interfaces
@@ -258,7 +291,7 @@ class Enviro:
 
                 if just_one_fragment:
                     break
-        else:
+        else:  # Parallel execution
             # If 0 -> find appropriate number of CPUs to use
             if n_cpus == 0:
                 n_cpus = int(0.8*cpu_count()) if cpu_count() > 4 else 2
@@ -272,44 +305,6 @@ class Enviro:
                                     generate_indicators=generate_indicators,
                                     max_lci_interfaces=max_lci_interfaces),
                   fragments)
-
-    @deprecated  # Use "compute_indicators_from_base_and_simulation"
-    def musiasem_indicators(self, system_per_country=True):
-        """
-        From the configuration file, read all inputs
-          - Base NIS format file
-          - Correspondence file
-          - Simulation type, simulation location
-          - LCI databases
-
-        :param system_per_country:
-        :return:
-        """
-        # Construct auxiliary models
-        nis, lci_data_index, simulation = self._prepare_process()
-        # Matcher
-        matcher = Matcher(self._cfg["correspondence_files_path"])
-
-        # ELABORATE MERGE NIS FILE
-        lst = merge_models(nis, matcher, simulation, lci_data_index)
-
-        # Generate NIS file into a temporary file
-        temp_name = tempfile.NamedTemporaryFile(dir=self._cfg["output_directory"], delete=False)
-        s = generate_workbook(lst)
-        if s:
-            with open(temp_name, "wb") as f:
-                f.write(s)
-        else:
-            print(f"ACHTUNG BITTE!: it was not possible to produce XLSX")
-
-        # Execute the NIS file
-        nis, issues = read_submit_solve_nis_file(temp_name)
-
-        # TODO Download outputs
-        # TODO Elaborate indicators
-        # TODO Write indicator files
-
-        # os.remove(temp_name)
 
 
 def run_nis_for_indicators(nis_file_name, state):
@@ -351,9 +346,21 @@ def run_nis_for_indicators(nis_file_name, state):
     return nis_file, df_indicators, df_interfaces
 
 
-def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment_processors, output_directory,
-                     max_lci_interfaces):
+def process_fragment(base_serial_state: bytes,
+                     partial_key: Dict[str, str],
+                     fragment_metadata: Dict[str, Set[str]],
+                     fragment_processors: List[SimStructuralProcessorAttributes],
+                     output_directory: str,
+                     max_lci_interfaces: int):
     """
+    :param base_serial_state: A "bytes" with Serialized state (deserialized inside)
+    :param partial_key: A dictionary describing the fragment dimensions
+    :param fragment_metadata: A dictionary with sets of dimensions inside the fragment
+    :param fragment_processors: A list of the structural processor attributes (read from simulation output)
+                                inside the fragment.
+    :param output_directory: Outputs directory
+    :param max_lci_interfaces: If >0, cut the LCI interfaces used to that number
+
         Different assembly options
          * Dendrogram functional processors: a clone per region / a fragment per region (so no need to clone)
         TODO * Structural processors: currently there is a list of structural processors attached to the last level of
@@ -379,118 +386,162 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
     """
 
     def _get_processors_by_type():
+        """
+        Returns two sets of Processors:
+          - "Functional without Interfaces": MuSIASEM dendrogram (without data, so no top-down would be possible)
+          - "Structural not Accounted": LCI processors and Simulation processors
+
+        NOTE: these two sets are not a partition of all Processors: we may have "Functional that may have Interfaces"
+              and "Structural which are Accounted"
+
+        The implicit input is the state in "prd" (PartialRetrievalDictionary)
+        :return: The two sets
+        """
         procs = prd.get(Processor.partial_key())
-        base_musiasem_procs = {}
-        structural_lci_procs = {}
+        musiasem_dendrogram_procs = {}
+        structural_procs = {}
         for proc in procs:
             n_interfaces = len(proc.factors)
             accounted = proc.instance_or_archetype.lower() == "instance"
             functional = proc.functional_or_structural.lower() == "functional"
             if accounted and n_interfaces == 0:
-                for hname in proc.full_hierarchy_names(prd):
-                    base_musiasem_procs[hname] = proc
+                for h_name in proc.full_hierarchy_names(prd):
+                    musiasem_dendrogram_procs[h_name] = proc
             elif not functional and not accounted:
-                for hname in proc.full_hierarchy_names(prd):
-                    structural_lci_procs[hname] = proc
+                for h_name in proc.full_hierarchy_names(prd):
+                    structural_procs[h_name] = proc
             else:
                 print(f"{proc.full_hierarchy_names(prd)[0]} is neither MuSIASEM base nor LCI base "
                       f"(functional: {functional}; accounted: {accounted}; n_interfaces: {n_interfaces}.")
-        return base_musiasem_procs, structural_lci_procs
+        return musiasem_dendrogram_procs, structural_procs
 
-    def _find_parents(reg: PartialRetrievalDictionary, base_procs, p):
+    def _find_parents(registry: PartialRetrievalDictionary, base_procs: Dict[str, Processor], p: Processor):
         """
-        Find names of parent Processors of "p"
+        Find names of parent Processors of "p" (not all ancestors, just parents).
 
-        :param reg: Registry of NIS objects
+        :param registry: Registry of NIS objects
         :param base_procs: Dict of Processor in the dendrogram
         :param p: name of a simulation process, which should be enumerated in the previous Dict
         :return: Dict of parents, {processor_name: Processor}. None if "p" is not found
         """
+        return [rel.parent_processor
+                for rel in registry.get(ProcessorsRelationPartOfObservation.partial_key(child=p))]
+
         # Find the Processor object
         target = None  # type: Processor
-        tech = p.attrs["technology"].lower()
+        tech = p.name # p.attrs["technology"].lower()
+        carrier = p.attributes.get("EcoinventCarrierName")  #p.attrs["carrier"].lower()  # Mandatory
         for proc_name, proc in base_procs.items():
             last = proc_name.split(".")[-1]
             if tech == last.lower():
                 target = proc
                 break
         if target:
-            _ = []
-            for n in target.full_hierarchy_names(reg):
+            _ = []  # No leaf nodes, just parents
+            for n in target.full_hierarchy_names(registry):
                 s1 = n.rsplit(".", 1)
                 if len(s1) > 1:
                     _.append(s1[0])
+            tmp = {}
+            for n in _:
+                p_tmp = registry.get(Processor.partial_key(name=n))[0]
+                # Add parent IF parent has the same carrier
+                p_carrier = p_tmp.attributes.get("EcoinventCarrierName", "").lower()
+                if carrier == p_carrier:
+                    tmp[n] = p_tmp
+            if len(tmp) == 0:  # If no parent matched the carrier, maybe the property was not defined
+                print(f"None of the parents {_} had the carrier '{carrier}' for processor {p}. Adding all of them")
+                tmp = {n: registry.get(Processor.partial_key(name=n))[0] for n in _}
 
-            return {n: reg.get(Processor.partial_key(name=n))[0] for n in _}
+            return tmp
         else:
             return None  # Not found, cannot tell if it has parents
 
-    def _find_lci(reg: PartialRetrievalDictionary, lci_procs, base_procs, p):
+    def _find_lci_and_tech_processors(reg: PartialRetrievalDictionary, structural_procs, base_procs, p):
         """
         Find LCI Processor(s) which are assimilated to "p"
           - Processor "p" should exist, as Structural/not-Accounted, with a Parent, [with no Interfaces?]
-          - Ecospold file associated
-          - "p" does not have an Ecospold, take parent's Ecospold
-          - Find a processor (Structural/not-Accounted but also without Parent) with the same Ecospold
+          - Ecospold file potentially associated
+          - if "p" does not have an Ecospold file associated, take parent's Ecospold file
+          - Find an "LCI processor": Structural/not-Accounted, NO Parent, with the same Ecospold
 
         :param reg: Registry of NIS objects
-        :param lci_procs: Dict of LCI Processors
+        :param structural_procs: Dict of Structural not Accounted Processors, which includes LCI processors but
+                                 also Simulation processors
         :param base_procs: Dict of Dendrogram Processors
         :param p: Name of the target processor
-        :return: List of matching LCI processors, None if "p" is not found
+        :return: List of matching LCI processors, None if "p" is not found; tech processor tech output variable name, desired output name (carrier name)
         """
         def _find_pure_lci_processor(target, lci_procs):
             lci_proc = None
             ecospold_file = target.attributes.get("EcoinventFilename", "")
             if ecospold_file != "":
                 for proc_name, proc in lci_procs.items():
-                    last = proc_name
-                    ecospold_file_2 = proc.attributes.get("EcoinventFilename", "")
-                    if ecospold_file == ecospold_file_2 and "." not in last:
-                        lci_proc = proc
-                        break
+                    if "." not in proc_name:
+                        ecospold_file_2 = proc.attributes.get("EcoinventFilename", "")
+                        if ecospold_file == ecospold_file_2:
+                            lci_proc = proc
+                            break
             return lci_proc
 
         target = None  # type: Processor
         tech = p.attrs["technology"].lower()
-        for proc_name, proc in lci_procs.items():
+        carrier_ = p.attrs["carrier"].lower()  # Mandatory
+        for proc_name, proc in structural_procs.items():
             last = proc_name.split(".")[-1]
             if tech == last.lower():
-                target = proc
-                break
+                if proc.attributes.get("EcoinventCarrierName", "").lower() == carrier_:
+                    target = proc
+                    break
         if target:
-            lci_proc = _find_pure_lci_processor(target, lci_procs)
+            lci_proc = _find_pure_lci_processor(target, structural_procs)
             if lci_proc is None:
                 # Parent
                 s1 = target.full_hierarchy_names(reg)[0].rsplit(".", 1)[0]
                 for proc_name, proc in base_procs.items():
                     if s1 == proc_name:
-                        lci_proc = _find_pure_lci_processor(proc, lci_procs)
+                        lci_proc = _find_pure_lci_processor(proc, structural_procs)
                         break
         else:
             lci_proc = None
 
-        return [lci_proc]
+        return [lci_proc], target
 
     def _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces, variables, scenarios):
+        """
+        Once model has been assembled in memory, generate a NIS file
+        This file can be later submmited for it to be accounted and indicators calculated
+
+        :param clone_processors:
+        :param cloners:
+        :param processors:
+        :param interfaces:
+        :param variables:
+        :param scenarios:
+        :return:
+        """
         cmds = []
         # ProblemStatement
         lst = [["Scenario", "Parameter", "Value", "Description"]]
         for s in scenarios:
             # Scenario, Parameter, Value, Description
-            lst.append([f"s{s}", "NISSolverObserversPriority", f"o{s}", f"Scenario s{s}, observer o{s}"])
+            scen = get_scenario_name("s", s)
+            observer = get_scenario_name("o", s)
+            lst.append([scen, "NISSolverObserversPriority", observer, f"Scenario {scen}, observer {observer}"])
         cmds.append(("ProblemStatement sim fragment", list_to_dataframe(lst)))
         # RefProvenance
         lst = [["RefID", "ProvenanceFileURL", "AgentType", "Agent", "Activities", "Entities"]]
         for s in scenarios:
-            lst.append([f"o{s}", "", "Software", f"Sentinel simulation observer for scenario {s}", "WP4", ""])
+            observer = get_scenario_name("o", s)
+            scen = get_scenario_name("s", s)
+            lst.append([observer, "", "Software", f"Sentinel simulation observer for scenario {scen}", "WP4", ""])
         cmds.append(("RefProvenance sim fragment", list_to_dataframe(lst)))
         # InterfaceTypes
         lst = [["InterfaceTypeHierarchy", "InterfaceType", "Sphere", "RoegenType", "ParentInterfaceType", "Formula",
                 "Description", "Unit", "OppositeSubsystemType", "Attributes"]]
         for v_name, attrs in variables.items():
-            lst.append(["sentinel", v_name, "Technosphere", "Flow", "", "",
-                        "It is the main output" if attrs["main_flow"] else "", attrs["unit"], "", ""])
+            if not attrs["main_flow"]:
+                lst.append(["Sentinel", v_name, "Technosphere", "Flow", "", "", "", attrs["unit"], "", ""])
         cmds.append(("InterfaceTypes sim fragment", list_to_dataframe(lst)))
 
         if clone:
@@ -507,14 +558,14 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
         else:
             return None
 
-    def is_main_flow(flow_name):  # TODO Depends on simulation
-        return flow_name in ["flow_out"]
+    def is_main_flow(flow_name, output_flow="flow_out_sum"):  # TODO Depends on simulation
+        return flow_name in [output_flow]
 
     def get_flow_orientation(flow_name):  # TODO Depends on simulation
-        return "Output" if flow_name in ["flow_out"] else "Input"
+        return "Output" if "out" in flow_name else "Input"
 
     def get_flow_unit(flow_name):  # TODO Depends on simulation
-        if flow_name.lower() in ["flow_out", "flow_in"]:
+        if flow_name.lower() in ["flow_out", "flow_in", "flow_out_sum", "flow_in_sum"]:
             return "kWh"
         elif flow_name.lower() in ["capacity_factor"]:
             return "kW"
@@ -524,10 +575,129 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
     def _interface_used_in_some_indicator(iface):
         return True
 
+    def _add_clone(cloners_list, clone_processors_list, regions, base_musiasem_procs):
+        cloners_list.append(
+            ["InvokingProcessor", "RequestedProcessor", "ScalingType", "InvokingInterface", "RequestedInterface",
+             "Scale"])
+        clone_processors_list.append(
+            ["ProcessorGroup", "Processor", "ParentProcessor", "SubsystemType", "System", "FunctionalOrStructural",
+             "Accounted", "Stock", "Description", "GeolocationRef", "GeolocationCode", "GeolocationLatLong",
+             "Attributes",
+             "@SimulationName", "@Region"])
+        # For each region, create a processor in "clone_processors" and an entry in "cloners" hanging the top
+        # Processors in the dendrogram into the region processor
+        for reg in regions:
+            clone_processors_list.append(["", reg, "", "", reg, "Functional", "Yes", "",
+                                         f"Country level processor, region '{reg}'", "", "", "", "", reg, reg])
+            considered = set()
+            for p_name, proc in base_musiasem_procs.items():
+                if len(p_name.split(".")) > 1 and p not in considered:
+                    considered.add(proc)
+                    # InvokingInterface, RequestedInterface, Scale are mandatory; specify something here
+                    cloners_list.append((reg, p_name, "Clone", "", "", ""))
+
+    def _add_processor(proc, matches, processors_list, already_added_processors_set, techs_used_in_regions):
+        """
+        Inserts elements in "processors_list", directly usable as worksheet rows in a BareProcessors command
+
+        :param proc:
+        :param matches:
+        :param processors_list:
+        :param already_added_processors_set:
+        :param techs_used_in_regions:
+        :return:
+        """
+        first_name = None
+        return_simple = True
+        # Add "Accounted Structural" Processors, hanging from each parent
+        for parent_p in matches:
+            p_name = f"{proc.attrs['technology']}_{region}"  # TODO add "Carrier"
+            if p_name in techs_used_in_regions:
+                return_simple = False
+            else:
+                techs_used_in_regions.add(p_name)
+            parent_name = parent_p.name
+            description = f"Simulation {proc.attrs['technology']} for {proc.attrs['carrier']} at region {region}, scenario {scenario}."
+            original_name = f"{proc.attrs['technology']}"
+            if first_name is None:
+                first_name = f"{parent_name}.{p_name}"
+                if (p_name, parent_name) not in already_added_processors_set:
+                    processors_list.append(["", p_name, parent_name, "", region, "Structural", "Yes", "",
+                                            description, "", "", "", "", original_name, region])
+                    already_added_processors_set.add((p_name, parent_name))
+            else:
+                if (p_name, parent_name) not in already_added_processors_set:
+                    processors_list.append(["", first_name, parent_name, "", region, "Structural", "Yes", "",
+                                            description, "", "", "", "", original_name, region])
+                    already_added_processors_set.add((p_name, parent_name))
+        return first_name, parent_name  # p_name if return_simple else first_name, parent_name
+
+    def _add_interfaces(proc, proc_name, proc_parent_name, lci_matches, matching_tech_proc) -> None:
+        """
+        Inserts elements in "interfaces", directly usable as worksheet rows in an Interfaces command
+
+        :param proc:
+        :param proc_name:
+        :param proc_parent_name:
+        :param lci_matches: Which LCI processors match
+        :param matching_tech_proc: Which technology processor matches
+        :return:
+        """
+        relative_to = None
+        tech_output_name = matching_tech_proc.attributes.get("SentinelVariable")
+        tech_desired_output_name = matching_tech_proc.attributes.get("EcoinventCarrierName")
+        tech_output_to_spold_factor = float(matching_tech_proc.attributes.get("EcoinventToSimulationFactor", "1.0"))
+        observer = get_scenario_name("o", scenario)
+        # Interfaces from simulation
+        for i in set(proc.attrs.keys()).difference(_idx_cols):
+            i_name = i
+            v = proc.attrs[i]
+            if is_main_flow(i, tech_output_name):
+                if tech_desired_output_name:
+                    i_name = tech_desired_output_name
+                v *= tech_output_to_spold_factor  # Change scale
+                relative_to = i_name  # All LCI interfaces will be relative to main output
+            orientation = get_flow_orientation(i)
+            interfaces.append([proc_name, i_name, "", "", "", orientation, "", "", "", "", v,
+                               "", "", "", "", "", "", time_, observer, "", ""])
+            if i_name not in variables:
+                variables[i_name] = dict(main_flow=is_main_flow(i), orientation=orientation, unit=get_flow_unit(i))
+
+        if lci_matches[0] is None or len(lci_matches) == 0:
+            print(f"{proc} has no LCI data associated. Cannot provide information for indicators, skipped.")
+            return
+
+        # Interfaces from LCI
+        # The following condition could happen if the fragment includes several Regions, Years and Scenarios.
+        # LCI does not change -currently, regionalized LCI would be different-
+        if (proc_name, proc_parent_name) not in already_added_lci:
+            already_added_lci.add((proc_name, proc_parent_name))
+
+            for cp in lci_matches:
+                for cont, i in enumerate(cp.factors):
+                    if cont >= max_lci_interfaces:
+                        break  # Artificial limit to reduce file size, for test purposes
+
+                    if not _interface_used_in_some_indicator(
+                            i.name):  # Economy of the model: avoid specifying interfaces not used later
+                        continue
+                    q = i.quantitative_observations[0]
+                    if q.attributes.get("relative_to", None) is None:
+                        continue
+                    unit = q.attributes.get("unit")  # TODO unit / relative_to_unit
+                    orientation = i.attributes.get("orientation", "")
+                    v = q.value
+                    # TODO Static: does not depend on scenario or time, avoid inserting repeatedly
+                    interfaces.append([proc_name, i.name, "", "", "", orientation, "", "", "", "", v,
+                                       "", relative_to, "", "", "", "", "Year", "Ecoinvent", "", ""])
+
+    # Process Fragment starts here -------------------------------------------------------------------------------------
     print(f"Processing fragment: {fragment_metadata}")
+
+    # PREPARE / INITIALIZE ------------------
     state = deserialize_state(base_serial_state)
     prd = state.get("_glb_idx")
-    base_musiasem_procs, structural_lci_procs = _get_processors_by_type()
+    dendrogram_musiasem_procs, structural_not_accounted_procs = _get_processors_by_type()
 
     processors = [
         ["ProcessorGroup", "Processor", "ParentProcessor", "SubsystemType", "System", "FunctionalOrStructural",
@@ -537,132 +707,88 @@ def process_fragment(base_serial_state, partial_key, fragment_metadata, fragment
         ["Processor", "InterfaceType", "Interface", "Sphere", "RoegenType", "Orientation", "OppositeSubsystemType",
          "GeolocationRef", "GeolocationCode", "InterfaceAttributes", "Value", "Unit", "RelativeTo", "Uncertainty",
          "Assessment", "PedigreeMatrix", "Pedigree", "Time", "Source", "NumberAttributes", "Comments"]]
-    clone = False
-    if clone:
-        cloners = [
-            ["InvokingProcessor", "RequestedProcessor", "ScalingType", "InvokingInterface", "RequestedInterface",
-             "Scale"]]
-        clone_processors = [
-            ["ProcessorGroup", "Processor", "ParentProcessor", "SubsystemType", "System", "FunctionalOrStructural",
-             "Accounted", "Stock", "Description", "GeolocationRef", "GeolocationCode", "GeolocationLatLong",
-             "Attributes",
-             "@SimulationName", "@Region"]]
-        # For each region, create a processor in "clone_processors" and an entry in "cloners" hanging the top
-        # Processors in the dendrogram into the region processor
-        for r in fragment_metadata["regions"]:
-            name = None
-            clone_processors.append(["", r, "", "", r, "Functional", "Yes", "",
-                                     f"Country level processor, region '{r}'", "", "", "", "", r, r])
-            considered = set()
-            for p_name, p in base_musiasem_procs.items():
-                if len(p_name.split(".")) > 1 and not p in considered:
-                    considered.add(p)
-                    # InvokingInterface, RequestedInterface, Scale are mandatory; specify something here
-                    cloners.append((r, p_name, "Clone", "", "", ""))
-    else:
-        cloners = []
-        clone_processors = []
-        # Also, modify all parent processors system to "r"
-        if len(fragment_metadata["regions"]) == 1:
-            r = next(iter(fragment_metadata["regions"]))
-            for p in base_musiasem_procs.values():
-                p.processor_system = r
-
+    techs_used_in_regions = set()  # Register if a technology has appeared in a region. Used to generate complete names
     already_added_processors = set()
     already_added_lci = set()
     variables = dict()
     max_lci_interfaces = 100000 if max_lci_interfaces == 0 else max_lci_interfaces
-    # If not periods are defined, define a specific year. At least one is needed for the solver to run
+    # If no periods are defined, define a specific year. At least one is needed for the solver to run
     default_time = "2038" if len(fragment_metadata["periods"]) == 0 else "Year"
-    for p in fragment_processors:  # Each Simulation processor
-        # Update time and scenario (they can change from entry to entry, but for MuSIASEM it is the same entity)
-        time_ = p.attrs.get("year", default_time)
+
+    # CLONE ------------------
+    # Two approaches "clone" or "not clone". "clone" would be to have multi-region models. For now, "not clone"
+    clone = False
+    cloners = []
+    clone_processors = []
+    if clone:
+        _add_clone(cloners, clone_processors, fragment_metadata["regions"], dendrogram_musiasem_procs)
+    else:
+        # Also, modify all parent processors system to region "r"
+        if len(fragment_metadata["regions"]) == 1:
+            r = next(iter(fragment_metadata["regions"]))
+            for p in dendrogram_musiasem_procs.values():
+                p.processor_system = r
+
+    for p in fragment_processors:  # For each Simulation processor
+        # Update time and scenario
+        # (they can change from entry to entry, but for MuSIASEM the same functional Processor is used)
+        time_ = p.attrs.get("time", p.attrs.get("year", default_time))
         scenario = p.attrs.get("scenario", "")
         region = p.attrs.get("region", "")
+        carrier = p.attrs.get("carrier", "")
+        tech = p.attrs.get("technology", "")
+        if carrier == "":
+            print(f"Processor {p} ignored because carrier is not defined")
+            continue  # Ignore processors not having carrier defined
+
+        # Find LCI and tech matches (considering "carrier" - "EcoinventCarrierName" if it is defined)
+        matching_lci, matching_tech = _find_lci_and_tech_processors(prd,
+                                                                    structural_not_accounted_procs,
+                                                                    dendrogram_musiasem_procs,
+                                                                    p)
+        if matching_tech is None:
+            print(f"Could not find a tech processor matching {p}. Skipping")
+            continue
+
         # Find Dendrogram matches
-        musiasem_matches = _find_parents(prd, structural_lci_procs, p)
+        musiasem_matches = _find_parents(prd, structural_not_accounted_procs, matching_tech)
         if musiasem_matches is None or len(musiasem_matches) == 0:
             print(f"{p} has no parents. Cannot account it, skipped.")
             continue
-        first_name = None
-        for m_name, m_proc in musiasem_matches.items():
-            name = f"{p.attrs['technology']}_{region}"  # TODO Maybe "carrier"? depends on the intention
-            parent = m_name
-            description = f"Simulation {p.attrs['technology']} for region {region}, scenario {scenario}."
-            original_name = f"{p.attrs['technology']}"
-            if first_name is None:
-                first_name = f"{parent}.{name}"
-                if (name, parent) not in already_added_processors:
-                    processors.append(["", name, parent, "", region, "Structural", "Yes", "",
-                                       description, "", "", "", "", original_name, region])
-                    already_added_processors.add((name, parent))
-            else:
-                if (name, parent) not in already_added_processors:
-                    processors.append(["", first_name, parent, "", region, "Structural", "Yes", "",
-                                       description, "", "", "", "", original_name, region])
-                    already_added_processors.add((name, parent))
 
-        if first_name is not None:
-            relative_to = None
-            for i in set(p.attrs.keys()).difference(_idx_cols):
-                if is_main_flow(i):
-                    relative_to = i
-                v = p.attrs[i]
-                orientation = get_flow_orientation(i)
-                interfaces.append([name, i, "", "", "", orientation, "", "", "", "", v,
-                                   "", "", "", "", "", "", time_, f"o{scenario}", "", ""])
-                if i not in variables:
-                    variables[i] = dict(main_flow=is_main_flow(i), orientation=orientation, unit=get_flow_unit(i))
+        # ADD PROCESSOR(S)
+        name, parent = _add_processor(p, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
 
-            if (name, parent) not in already_added_lci:
-                already_added_lci.add((name, parent))
-                # Find LCI matches, expand interfaces
-                lci_matches = _find_lci(prd, structural_lci_procs, base_musiasem_procs, p)
-                if lci_matches is None or len(lci_matches) == 0:
-                    print(f"{p} has no LCI data associated. Cannot provide information for indicators, skipped.")
-                    continue
-                for cp in lci_matches:
-                    for cont, i in enumerate(cp.factors):
-                        if cont >= max_lci_interfaces:
-                            break  # Artificial limit to reduce file size, for test purposes
-
-                        if not _interface_used_in_some_indicator(i.name):  # Economy of the model: avoid specifying interfaces not used later
-                            continue
-                        q = i.quantitative_observations[0]
-                        if q.attributes.get("relative_to", None) is None:
-                            continue
-                        unit = q.attributes.get("unit")  # TODO unit / relative_to_unit
-                        orientation = i.attributes.get("orientation", "")
-                        v = q.value
-                        # TODO Static: does not depend on scenario or time, avoid inserting repeatedly
-                        interfaces.append([name, i.name, "", "", "", orientation, "", "", "", "", v,
-                                           "", relative_to, "", "", "", "", "Year", "", "", ""])
+        if name:  # At least a match? -> add Interfaces, combining
+            # ADD INTERFACES (FROM Simulation AND FROM LCI)
+            _add_interfaces(p, name, parent, matching_lci, matching_tech)
 
     print(f"Generating NIS file for: {fragment_metadata}")
 
-    # Generate and run NIS file, returning the result
+    # GENERATE NIS file
     nis_file_name = _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces,
                                                 variables, fragment_metadata["scenarios"])
     if nis_file_name:
         print(f'frag_file = "{nis_file_name}"')
-        # sys.exit(1)  # For now
+        # SUBMIT NIS file: account and calculate indicators
         try:
             print(f"Processing NIS file for: {fragment_metadata}")
             nis_idempotent, df_indicators, df_interfaces = run_nis_for_indicators(nis_file_name, state)
             print(f"Processing NIS file done, result shape: {df_indicators.shape}")
         finally:
             os.remove(nis_file_name)
+        # Return results
         return nis_idempotent, df_indicators, df_interfaces
     else:
+        # Return Empty
         return None, pd.DataFrame(), pd.DataFrame()
 
 
 if __name__ == '__main__':
     base = "https://docs.google.com/spreadsheets/d/1ZXpxYLVO5BXoxLYeJkvfEiOpYxzNwVy01BmB1hnfNQ0/edit?usp=sharing"  # "Copy of Enviro-Sentinel-Base for Script Development"
     base = "https://docs.google.com/spreadsheets/d/15NNoP8VjC2jlhktT0A8Y0ljqOoTzgar8l42E5-IRD90/edit?usp=sharing"  # Base full
+    base = "https://docs.google.com/spreadsheets/d/1AXCBJZEr8Gw6c9OeCTId3TwUaWZt_ePAOx34HgDJdSI/edit?usp=sharing"  # Base full, LCIA implementation
     # base = "https://docs.google.com/spreadsheets/d/1nYzphq1XYrezquW3yj7UiJ8sNJ8RzJ8gqErg3oVmw2Q/edit?usp=sharing"  # Base with only 1 processor
-    frag_file = "/tmp/tmp2huk3hdy"  # "/tmp/tmpp4shvdiw"
-    frag_file = "/home/rnebot/Downloads/simple_relative_to.xlsx"
     frag_file = ""
     if os.path.exists(frag_file):
         # state = deserialize_state(prepare_base_state(base, solve=False))
@@ -676,12 +802,11 @@ if __name__ == '__main__':
                  correspondence_files_path="",
                  simulation_type="sentinel",
                  simulation_files_path="/home/rnebot/Downloads/borrame/calliope-output/datapackage.json",
-                 lci_data_locations={},
-                 output_directory="/home/rnebot/Downloads/borrame/enviro-output/")
+                 output_directory="/home/rnebot/Downloads/borrame/enviro-output-2/")
         t.set_cfg_file_path(_)
         t.compute_indicators_from_base_and_simulation(just_one_fragment=True,
-                                                      generate_nis_base_file=True,
-                                                      generate_nis_fragment_file=True,
+                                                      generate_nis_base_file=False,
+                                                      generate_nis_fragment_file=False,
                                                       generate_interface_results=True,
                                                       generate_indicators=True,
                                                       max_lci_interfaces=0,
