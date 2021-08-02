@@ -2,7 +2,7 @@ import functools
 import logging
 import operator
 import os
-
+import urllib.request
 import sys
 import time
 from multiprocessing import Pool, cpu_count
@@ -19,7 +19,7 @@ from nexinfosys.models.musiasem_concepts import Processor, ProcessorsRelationPar
 from nexinfosys.serialization import deserialize_state
 
 from enbios.common.helper import generate_workbook, prepare_base_state, list_to_dataframe, get_valid_name, \
-    get_scenario_name
+    get_scenario_name, get_file_url
 from enbios.input import Simulation
 from enbios.input.lci import LCIIndex
 # from enbios.input.simulators.calliope import CalliopeSimulation
@@ -41,24 +41,24 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
                                                  Dict[str, Set[str]],  #
                                                  List[SimStructuralProcessorAttributes]],
                                     s_state: bytes,
-                                    tmp_out_dir: str,
                                     output_dir: str,
                                     generate_nis_fragment_file: bool,
                                     generate_interface_results: bool,
                                     generate_indicators: bool,
-                                    max_lci_interfaces: int
+                                    max_lci_interfaces: int,
+                                    keep_fragment_file: bool
                                     ):
     """
     Prepares a NIS file from inputs and submits it to NIS for accounting and calculation of indicators
 
     :param param: A Tuple with the information to drive the process
     :param s_state: A "bytes" with Serialized state (deserialized inside)
-    :param tmp_out_dir: Working directory
     :param output_dir: Outputs directory
-    :param generate_nis_fragment_file: True to generate a NIS file for the fragment
+    :param generate_nis_fragment_file: True to generate an expanded NIS file for the fragment
     :param generate_interface_results: True to generate a NIS file with the values of interfaces after solving
     :param generate_indicators: True to generate a file with all indicators
     :param max_lci_interfaces: If >0, cut the LCI interfaces used to that number
+    :param keep_fragment_file: If True, keep the minimal fragment NIS file
     :return:
     """
 
@@ -71,11 +71,12 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
         :param df_interfaces:
         :return:
         """
-        print("Writing results... --")
+        print("Writing results ...")
+        # Main result: "indicators.csv" file (aggregates all fragments)
         lock = NamedAtomicLock("enbios-lock")
         lock.acquire()
         try:
-            indicators_csv_file = output_dir + os.sep + f"indicators.csv"
+            indicators_csv_file = os.path.join(output_dir, f"indicators.csv")
             if not os.path.isfile(indicators_csv_file):
                 df_indicators.to_csv(indicators_csv_file, index=False)
             else:
@@ -83,43 +84,47 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
         finally:
             lock.release()
 
+        # Write a separate indicators.csv for the fragment
+        if generate_indicators:
+            csv_name = os.path.join(output_dir, f"fragment_indicators{get_valid_name(str(p_key))}.csv")
+            if not df_indicators.empty:
+                df_indicators.to_csv(csv_name, index=False)
+            else:
+                with open(csv_name, "wt") as f:
+                    f.write("Could not obtain indicator values (??)")
+
+        # Write NIS of the fragment just processed
         if generate_nis_fragment_file:
-            with open(output_dir + os.sep + f"fragment_nis{get_valid_name(str(p_key))}.xlsx", "wb") as f:
+            fragment_file_name = os.path.join(output_dir, f"full_fragment{get_valid_name(str(p_key))}.xlsx")
+            with open(fragment_file_name, "wb") as f:
                 f.write(nis_idempotent_file)
 
+        # Write Dataset with values for each interface as calculated by NIS solver, for the fragment
         if generate_interface_results:
-            csv_name = output_dir + os.sep + f"fragment_interfaces{get_valid_name(str(p_key))}.csv"
+            csv_name = os.path.join(output_dir, f"fragment_interfaces{get_valid_name(str(p_key))}.csv")
             if not df_interfaces.empty:
                 df_interfaces.to_csv(csv_name, index=False)
             else:
                 with open(csv_name, "wt") as f:
                     f.write("Could not obtain interface values (??)")
 
-        if generate_indicators:
-            csv_name = output_dir + os.sep + f"fragment_indicators{get_valid_name(str(p_key))}.csv"
-            if not df_indicators.empty:
-                df_indicators.to_csv(csv_name, index=False)
-            else:
-                with open(csv_name, "wt") as f:
-                    f.write("Could not obtain indicator values (??)")
-        print("Writing done. ----- ")
-
     # Starts here
     frag_label, p_key, f_metadata, f_processors = param  # Unpack "param"
-    print(f"Fragment processing...")
+    print(f"Fragment processing ...")
     start = time.time()  # Time execution
 
     # Call main function
     nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
                                                                          f_metadata, f_processors,
-                                                                         tmp_out_dir,
-                                                                         max_lci_interfaces)
+                                                                         output_dir,
+                                                                         max_lci_interfaces,
+                                                                         keep_fragment_file)
 
     end = time.time()  # Stop timing
     print(f"Fragment processed in {end - start} seconds ---------------------------------------")
     write_outputs(nis_idempotent_file, df_indicators, df_interfaces)
     start = time.time()  # Time also output writing
-    print(f"Fragment outputs written in {start-end} seconds")
+    print(f"Fragment outputs written in {start-end} seconds to output dir: {output_dir}")
 
 
 class Enviro:
@@ -129,7 +134,7 @@ class Enviro:
 
     def set_cfg_file_path(self, cfg_file_path):
         self._cfg = read_parse_configuration(cfg_file_path)
-        self._cfg_file_path = cfg_file_path if isinstance(cfg_file_path, str) else None
+        self._cfg_file_path = os.path.realpath(cfg_file_path) if isinstance(cfg_file_path, str) else None
 
     def _get_simulation(self) -> Simulation:
         # Simulation
@@ -202,27 +207,41 @@ class Enviro:
         prd, scenarios, regions, times, techs, carriers, units, col_types, ctc = simulation.read("")
 
         partition_lists = []
+        mandatory_attributes = ["carrier", "technology"]
         if split_by_region and len(regions) > 0:
             partition_lists.append([("_g", r) for r in regions])
+            mandatory_attributes.append("region")
         if split_by_period and len(times) > 0:
             partition_lists.append([("_d", t) for t in times])
+            mandatory_attributes.append("time")
         if split_by_scenario and len(scenarios) > 0:
             partition_lists.append([("_s", s) for s in scenarios])
+            mandatory_attributes.append("scenario")
 
-        for i, partition in enumerate(list(itertools.product(*partition_lists))):
+        for i, partition in enumerate(sorted(list(itertools.product(*partition_lists)))):
             partial_key = {t[0]: t[1] for t in partition}
             procs = prd.get(partial_key)
             # Sweep "procs" and update periods, regions, scenarios, models and carriers
             md = dict(periods=set(), regions=set(), scenarios=set(), models=set(), carriers=set(), techs=set(), flows=set())
+            accountable_procs = []
             for p in procs:
-                md["regions"].add(p.attrs["region"])
-                md["scenarios"].add(p.attrs["scenario"])
-                md["techs"].add(p.attrs["technology"])
-                if "year" in p.attrs or "time" in p.attrs:
-                    if "year" in p.attrs:
-                        md["periods"].add(p.attrs["year"])
-                    else:
-                        md["periods"].add(p.attrs["time"])
+                any_mandatory_not_found = False
+                for mandatory in mandatory_attributes:
+                    if mandatory not in p.attrs:
+                        # print(f"Processor {p.attrs} did not define '{mandatory}'. Skipping.")
+                        any_mandatory_not_found = True
+                        break
+                if any_mandatory_not_found:
+                    continue
+                accountable_procs.append(p)
+                if "region" in p.attrs:
+                    md["regions"].add(p.attrs["region"])
+                if "scenario" in p.attrs:
+                    md["scenarios"].add(p.attrs["scenario"])
+                if "technology" in p.attrs:
+                    md["techs"].add(p.attrs["technology"])
+                if "time" in p.attrs:
+                    md["periods"].add(p.attrs["time"])
                 if "model" in p.attrs:
                     md["models"].add(p.attrs["model"])
                 if "carrier" in p.attrs:
@@ -234,13 +253,16 @@ class Enviro:
             #  - an equivalent (to the label) dict
             #  - fragment metadata
             #  - the Processors (the data to process!)
-            yield ':'.join([f"{k}{v}" for k, v in partial_key.items()]), partial_key, md, procs
+            # print(':'.join([f"{k}{v}" for k, v in partial_key.items()]))
+
+            yield ':'.join([f"{k}{v}" for k, v in partial_key.items()]), partial_key, md, accountable_procs
 
     def compute_indicators_from_base_and_simulation(self,
                                                     just_one_fragment: bool = False,
                                                     generate_nis_base_file: bool = False,
                                                     generate_nis_fragment_file: bool = False,
                                                     generate_interface_results: bool = False,
+                                                    keep_fragment_file: bool = True,
                                                     generate_indicators: bool = False,
                                                     max_lci_interfaces: int = 0,
                                                     n_cpus: int = 1,
@@ -257,53 +279,62 @@ class Enviro:
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
         :param n_cpus: Number of CPUs of the local computer used to perform the process
         :param just_prepare_base: True to only preparing Base file and exit
+        :param keep_fragment_file: If True, do not remove the minimal NIS file generated and submitted to NIS
         :return:
         """
 
         output_dir = self._cfg["output_directory"]
+        if not os.path.isabs(output_dir):
+            output_dir = os.path.join(os.path.dirname(self._cfg_file_path), output_dir)
+
+        print(f"output_dir: {output_dir}")
         os.makedirs(output_dir, exist_ok=True)
 
         # Prepare Base
-        serial_state = prepare_base_state(self._cfg["nis_file_location"], False, self._cfg["output_directory"])
+        serial_state = prepare_base_state(self._cfg["nis_file_location"], False, output_dir)
         if just_prepare_base:
-            print("Base prepared, exiting because 'just_prepare_base == True'")
+            print("Base processed and cached, exiting because 'just_prepare_base == True'")
             sys.exit(1)
 
+        # [Write Base as a full NIS file]
         if generate_nis_base_file:
             nis_file, _, _ = run_nis_for_indicators(None, deserialize_state(serial_state))
-            with open(output_dir+os.sep+"nis_base.idempotent.xlsx", "wb") as f:
+            with open(os.path.join(output_dir, "nis_base.idempotent.xlsx"), "wb") as f:
                 f.write(nis_file)
 
-        tmp_output_dir = tempfile.gettempdir()
+        # Remove "indicators.csv" if it exists
+        indicators_csv_file = os.path.join(output_dir, f"indicators.csv")
+        if os.path.isfile(indicators_csv_file):
+            os.remove(indicators_csv_file)
 
         # MAIN LOOP - Split simulation in independent fragments, and process them
         fragments = sorted([_ for _ in self._read_simulation_fragments()], key=operator.itemgetter(0))
         logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
-        if n_cpus == 1:  # Serial execution (anyway, using the parallel processing function, valid for both)
+        if n_cpus == 1:  # Serial execution (anyway, function "parallelizable_process_fragment" is valid for both)
             for i, (frag_label, partial_key, frag_metadata, frag_processors) in enumerate(fragments):
                 # fragment_metadata: dict with regions, years, scenarios in the fragment
                 # fragment_processors: list of processors with their attributes which will be interfaces
-                print(f"{partial_key}: {len(frag_processors)}")
+                # print(f"{partial_key}: {len(frag_processors)}")
                 parallelizable_process_fragment((frag_label, partial_key, frag_metadata, frag_processors), serial_state,
-                                                tmp_output_dir, output_dir,
+                                                output_dir,
                                                 generate_nis_fragment_file, generate_interface_results,
-                                                generate_indicators, max_lci_interfaces)
+                                                generate_indicators, max_lci_interfaces, keep_fragment_file)
 
                 if just_one_fragment:
                     break
         else:  # Parallel execution
-            # If 0 -> find appropriate number of CPUs to use
+            # If 0 -> find an appropriate number of CPUs to use
             if n_cpus == 0:
                 n_cpus = int(0.8*cpu_count()) if cpu_count() > 4 else 2
 
             p = Pool(n_cpus)
             p.map(functools.partial(parallelizable_process_fragment,
                                     s_state=serial_state,
-                                    tmp_out_dir=tmp_output_dir, output_dir=output_dir,
+                                    output_dir=output_dir,
                                     generate_nis_fragment_file=generate_nis_fragment_file,
                                     generate_interface_results=generate_interface_results,
                                     generate_indicators=generate_indicators,
-                                    max_lci_interfaces=max_lci_interfaces),
+                                    max_lci_interfaces=max_lci_interfaces, keep_fragment_file=keep_fragment_file),
                   fragments)
 
 
@@ -311,7 +342,7 @@ def run_nis_for_indicators(nis_file_name, state):
     nis = NIS()
     nis.open_session(True, state)
     if nis_file_name:
-        nis.load_workbook(f"file://{nis_file_name}")
+        nis.load_workbook(get_file_url(nis_file_name))
     elif isinstance(state, State):
         nis.append_command("Ignore me", list_to_dataframe([["dummy"], ["dummy"]]))
     issues = nis.submit_and_solve()
@@ -351,7 +382,8 @@ def process_fragment(base_serial_state: bytes,
                      fragment_metadata: Dict[str, Set[str]],
                      fragment_processors: List[SimStructuralProcessorAttributes],
                      output_directory: str,
-                     max_lci_interfaces: int):
+                     max_lci_interfaces: int,
+                     keep_fragment_file: bool):
     """
     :param base_serial_state: A "bytes" with Serialized state (deserialized inside)
     :param partial_key: A dictionary describing the fragment dimensions
@@ -360,6 +392,7 @@ def process_fragment(base_serial_state: bytes,
                                 inside the fragment.
     :param output_directory: Outputs directory
     :param max_lci_interfaces: If >0, cut the LCI interfaces used to that number
+    :param keep_fragment_file: If True, do not remove the minimal fragment file submitted to NIS
 
         Different assembly options
          * Dendrogram functional processors: a clone per region / a fragment per region (so no need to clone)
@@ -428,8 +461,11 @@ def process_fragment(base_serial_state: bytes,
                 for rel in registry.get(ProcessorsRelationPartOfObservation.partial_key(child=p))]
 
         # Find the Processor object
+        # SimProc(tech, carrier) ->(child-of)-> FunctMuSProc(ParentProc)
+        # SimProc(tech, carrier) as StrucMuSProc(tech, carrier2)
+
         target = None  # type: Processor
-        tech = p.name # p.attrs["technology"].lower()
+        tech = p.name  # p.attrs["technology"].lower()
         carrier = p.attributes.get("EcoinventCarrierName")  #p.attrs["carrier"].lower()  # Mandatory
         for proc_name, proc in base_procs.items():
             last = proc_name.split(".")[-1]
@@ -484,15 +520,26 @@ def process_fragment(base_serial_state: bytes,
                             break
             return lci_proc
 
+        # Find structural not accounted matching the sim processor (match tech name and proc carrier name)
         target = None  # type: Processor
         tech = p.attrs["technology"].lower()
         carrier_ = p.attrs["carrier"].lower()  # Mandatory
         for proc_name, proc in structural_procs.items():
             last = proc_name.split(".")[-1]
             if tech == last.lower():
-                if proc.attributes.get("EcoinventCarrierName", "").lower() == carrier_:
-                    target = proc
-                    break
+                if carrier_ != "":
+                    carrier_field = ""
+                    if "SimulationCarrier" in proc.attributes:
+                        carrier_field = "SimulationCarrier"
+                    elif "ProcessorCarrier" in proc.attributes:
+                        carrier_field = "ProcessorCarrier"
+                    elif "EcoinventCarrierName" in proc.attributes:
+                        carrier_field = "EcoinventCarriername"
+                    if proc.attributes.get(carrier_field, "").lower() == carrier_:
+                        target = proc
+                        break
+                else:
+                    target = proc  # If "tech" matches and "carrier_" is ""
         if target:
             lci_proc = _find_pure_lci_processor(target, structural_procs)
             if lci_proc is None:
@@ -551,10 +598,10 @@ def process_fragment(base_serial_state: bytes,
         cmds.append(("Interfaces sim fragment", list_to_dataframe(interfaces)))
         s = generate_workbook(cmds)
         if s:
-            temp_name = tempfile.NamedTemporaryFile(dir=output_directory, delete=False)
-            with open(temp_name.name, "wb") as f:
+            frag_file_name = os.path.join(output_directory, f"fragment_{get_valid_name(str(partial_key))}.xlsx")
+            with open(frag_file_name, "wb") as f:
                 f.write(s)
-            return temp_name.name
+            return frag_file_name
         else:
             return None
 
@@ -611,7 +658,8 @@ def process_fragment(base_serial_state: bytes,
         return_simple = True
         # Add "Accounted Structural" Processors, hanging from each parent
         for parent_p in matches:
-            p_name = f"{proc.attrs['technology']}_{region}"  # TODO add "Carrier"
+            # NEW PROCESSOR NAME: technology + carrier + region
+            p_name = f"{proc.attrs['technology']}_{proc.attrs['carrier']}_{region}"
             if p_name in techs_used_in_regions:
                 return_simple = False
             else:
@@ -644,7 +692,7 @@ def process_fragment(base_serial_state: bytes,
         :return:
         """
         relative_to = None
-        tech_output_name = matching_tech_proc.attributes.get("SentinelVariable")
+        tech_output_name = matching_tech_proc.attributes.get("SimulationVariable")
         tech_desired_output_name = matching_tech_proc.attributes.get("EcoinventCarrierName")
         tech_output_to_spold_factor = float(matching_tech_proc.attributes.get("EcoinventToSimulationFactor", "1.0"))
         observer = get_scenario_name("o", scenario)
@@ -664,7 +712,8 @@ def process_fragment(base_serial_state: bytes,
                 variables[i_name] = dict(main_flow=is_main_flow(i), orientation=orientation, unit=get_flow_unit(i))
 
         if lci_matches[0] is None or len(lci_matches) == 0:
-            print(f"{proc} has no LCI data associated. Cannot provide information for indicators, skipped.")
+            print(f"{proc.attrs} does not have an LCI processor associated. "
+                  f"Cannot provide information for indicators, skipped.")
             return
 
         # Interfaces from LCI
@@ -691,8 +740,8 @@ def process_fragment(base_serial_state: bytes,
                     interfaces.append([proc_name, i.name, "", "", "", orientation, "", "", "", "", v,
                                        "", relative_to, "", "", "", "", "Year", "Ecoinvent", "", ""])
 
-    # Process Fragment starts here -------------------------------------------------------------------------------------
-    print(f"Processing fragment: {fragment_metadata}")
+    # MAIN - Integration, NIS file for the fragment, and NIS submission (Indicators) -----------------------------------
+    print(f"Processing fragment {fragment_metadata}")
 
     # PREPARE / INITIALIZE ------------------
     state = deserialize_state(base_serial_state)
@@ -729,7 +778,8 @@ def process_fragment(base_serial_state: bytes,
             for p in dendrogram_musiasem_procs.values():
                 p.processor_system = r
 
-    for p in fragment_processors:  # For each Simulation processor
+    # FOR EACH SIMULATION PROCESSOR
+    for p in fragment_processors:
         # Update time and scenario
         # (they can change from entry to entry, but for MuSIASEM the same functional Processor is used)
         time_ = p.attrs.get("time", p.attrs.get("year", default_time))
@@ -738,45 +788,48 @@ def process_fragment(base_serial_state: bytes,
         carrier = p.attrs.get("carrier", "")
         tech = p.attrs.get("technology", "")
         if carrier == "":
-            print(f"Processor {p} ignored because carrier is not defined")
+            print(f"Processor {p.attrs} ignored because carrier is not defined")
             continue  # Ignore processors not having carrier defined
 
-        # Find LCI and tech matches (considering "carrier" - "EcoinventCarrierName" if it is defined)
+        # Find "LCI" and "Reference Tech" matching Processor(s)
+        # (considering "carrier" - "EcoinventCarrierName" if it is defined)
         matching_lci, matching_tech = _find_lci_and_tech_processors(prd,
                                                                     structural_not_accounted_procs,
                                                                     dendrogram_musiasem_procs,
                                                                     p)
         if matching_tech is None:
-            print(f"Could not find a tech processor matching {p}. Skipping")
+            print(f"Could not find a tech processor matching {p.attrs}. Skipping")
             continue
 
-        # Find Dendrogram matches
+        # Find "MUSIASEM Dendrogram" matching Processor(s)
         musiasem_matches = _find_parents(prd, structural_not_accounted_procs, matching_tech)
         if musiasem_matches is None or len(musiasem_matches) == 0:
             print(f"{p} has no parents. Cannot account it, skipped.")
             continue
 
-        # ADD PROCESSOR(S)
+        # Add PROCESSOR(S)
         name, parent = _add_processor(p, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
 
+        # Add INTERFACES (FROM Simulation AND FROM LCI), if we had a processor added (a name)
         if name:  # At least a match? -> add Interfaces, combining
-            # ADD INTERFACES (FROM Simulation AND FROM LCI)
             _add_interfaces(p, name, parent, matching_lci, matching_tech)
 
-    print(f"Generating NIS file for: {fragment_metadata}")
+    print(f"Generating NIS file ...")  # for: {fragment_metadata}")
 
     # GENERATE NIS file
     nis_file_name = _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces,
                                                 variables, fragment_metadata["scenarios"])
+
+    # SUBMIT NIS file: account and calculate indicators, if a NIS file was generated
     if nis_file_name:
         print(f'frag_file = "{nis_file_name}"')
-        # SUBMIT NIS file: account and calculate indicators
         try:
-            print(f"Processing NIS file for: {fragment_metadata}")
+            print(f"Processing NIS file ...")  # for: {fragment_metadata}")
             nis_idempotent, df_indicators, df_interfaces = run_nis_for_indicators(nis_file_name, state)
-            print(f"Processing NIS file done, result shape: {df_indicators.shape}")
+            print(f"File processing done, shape of 'Indicators' dataset: {df_indicators.shape}")
         finally:
-            os.remove(nis_file_name)
+            if not keep_fragment_file:
+                os.remove(nis_file_name)
         # Return results
         return nis_idempotent, df_indicators, df_interfaces
     else:

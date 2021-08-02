@@ -4,8 +4,6 @@ Read a Sentinel model definition and outputs, to obtain one or more DiGraphs whi
 obtain either a MuSIASEM or LCA structure
 
 """
-from typing import Dict
-
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
 from enbios.common.helper import list_to_dataframe, get_scenario_name
@@ -37,26 +35,28 @@ class SentinelSimulation(Simulation):
         if filter_model is None:  # Mandatory
             return
 
-        regions = set()
         scenarios = set()
+        regions = set()
         times = set()
         techs = set()
         carriers = set()
         units = set()
         col_types = set()  # Interface types
         ctc = set()  # Country - Tech - Carrier
+        # print(f"SENTINEL INDEX: {self._sentinel_index_path}")
         pkg = read_pkg(self._sentinel_index_path)
         prd = PartialRetrievalDictionary()
         for res in pkg.resources:
             df = to_df(res)
+            # print(f"INDEX: {df.index.names}; COLUMNS: {df.columns}")
             col_types.update(df.columns)
             region_idx = df.index.names.index("region") if "region" in df.index.names else -1
             carrier_name = "carrier" if "carrier" in df.index.names else "carriers" if "carriers" in df.index.names else None
             carrier_idx = df.index.names.index(carrier_name) if carrier_name is not None else -1
             tech_idx = df.index.names.index("technology") if "technology" in df.index.names else -1
-
             scenario_idx = df.index.names.index("scenario") if "scenario" in df.index.names else -1
             time_idx = df.index.names.index("year") if "year" in df.index.names else -1
+            time_idx = time_idx if time_idx > -1 else df.index.names.index("time") if "time" in df.index.names else -1
             unit_idx = df.index.names.index("unit") if "unit" in df.index.names else -1
             for idx, cols in df.iterrows():
                 if not isinstance(idx, tuple):  # When it is not a MultiIndex, Pandas has "idx" to not be a Tuple; workaround: convert into a Tuple of a single element

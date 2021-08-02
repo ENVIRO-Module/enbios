@@ -41,7 +41,7 @@ twine upload --skip-existing dist/*
 """
 
 package_name = 'enbios'
-version = '0.20'
+version = '0.48'
 
 
 def parse_requirements(strs):
@@ -86,6 +86,7 @@ setup(
     packages=['enbios', 'enbios.bin', 'enbios.common', 'enbios.model',
               'enbios.input', 'enbios.input.data_preparation', 'enbios.input.simulators',
               'enbios.output',
+              'enbios.visualize',
               'enbios.processing', 'enbios.processing.indicators'],
     include_package_data=True,
     url='https://github.com/ENVIRO-Module/enviro',

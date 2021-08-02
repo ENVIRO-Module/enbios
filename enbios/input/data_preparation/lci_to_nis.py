@@ -270,7 +270,7 @@ class SpoldToNIS:
         # Process each .spold file
         already_processed = set()
         for spold in spolds:
-            file_name = f"{lci_base}{os.sep}{spold['ecoinvent_filename']}"
+            file_name = os.path.join(f"{lci_base}", f"{spold['ecoinvent_filename']}")
             if file_name in already_processed:
                 continue
             else:

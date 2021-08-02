@@ -1,12 +1,17 @@
 # /usr/bin/env python
+import locale
 import os
 import fire
+import webbrowser
+
 from nexinfosys.bin.cli_script import set_log_level_from_cli_param
 from enbios.input.data_preparation.lci_to_nis import SpoldToNIS
 from enbios.input.data_preparation.lcia_implementation_to_nis import convert_lcia_implementation_to_nis
 from enbios.input.data_preparation.recipe_to_nis import convert_recipe_to_nis
 from enbios.input.data_preparation.sentinel_to_nis_prep import sentinel_to_prep_file
+from enbios.processing import read_parse_configuration
 from enbios.processing.main import Enviro
+from enbios.visualize import create_dashboard_app
 
 """
 DEVELOPMENT CLI EXECUTION:
@@ -118,9 +123,10 @@ class Enbios:
     def enviro(cfg_file_path,
                just_one_fragment: bool = False,
                generate_nis_base_file: bool = False,
-               generate_nis_fragment_file: bool = False,
+               generate_full_fragment_files: bool = False,
                generate_interface_results: bool = False,
                generate_indicators: bool = False,
+               keep_min_fragment_files: bool = True,
                max_lci_interfaces: int = 0,
                n_cpus: int = 1,
                log: str = None,
@@ -139,24 +145,64 @@ class Enbios:
         :param cfg_file_path:
         :param just_one_fragment: True if only one of the fragments is to be computed, to test things
         :param generate_nis_base_file: True if the Base file should be generated (once) for testing purposes
-        :param generate_nis_fragment_file: True if the current fragment should be dumped into a NIS formatted XLSX file
+        :param generate_full_fragment_files: True if the current fragment should be dumped into a NIS formatted XLSX file
         :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
         :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
+        :param keep_min_fragment_files: If True, do not delete minimal NIS files submitted to NIS to compute indicators
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
         :param n_cpus: Number of CPUs of the local computer used to perform the process (default 1, sequential)
         :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :param just_prepare_base: True to only preparing Base file and exit
         :return:
         """
+        # locale.setlocale(locale.LC_ALL, 'en_US')
         set_log_level_from_cli_param(log)
         t = Enviro()
         t.set_cfg_file_path(cfg_file_path)
-        t.compute_indicators_from_base_and_simulation(just_one_fragment, generate_nis_base_file,
-                                                      generate_nis_fragment_file,
-                                                      generate_interface_results, generate_indicators,
+
+        t.compute_indicators_from_base_and_simulation(just_one_fragment,
+                                                      generate_nis_base_file,
+                                                      generate_full_fragment_files,
+                                                      generate_interface_results,
+                                                      keep_min_fragment_files,
+                                                      generate_indicators,
                                                       max_lci_interfaces,
                                                       n_cpus,
                                                       just_prepare_base)
+
+    @staticmethod
+    def visualize(cfg_file_path, open_browser=False, log: str = None):
+        """
+        Prepare a Dash server enabling basic visualization of results
+            - scenario
+            - region
+            - year
+            - processor
+            - [carrier]
+            - indicator
+
+        :param cfg_file_path:
+        :param open_browser: If True, open the link in the browser
+        :param log:
+        :return:
+        """
+        # Read data
+        cfg_file_path = os.path.realpath(cfg_file_path)
+        cfg = read_parse_configuration(cfg_file_path)
+        base_dir = cfg["output_directory"]
+        if not os.path.isabs(base_dir):
+            base_dir = os.path.join(os.path.dirname(cfg_file_path), base_dir)
+
+        app = create_dashboard_app(base_dir)
+
+        # Launch Dash dashboard server
+        host = "localhost"
+        port = 8050
+        address = f"http://{host}:{port}"
+        print(f"Please, open {address}. Ctrl+C to Stop.")
+        if open_browser:
+            webbrowser.open(address)
+        app.run_server(host=host, port=port, use_reloader=False)
 
 
 def main():

@@ -3,6 +3,7 @@ import json
 import os
 import re
 import tempfile
+import urllib.request
 from io import BytesIO
 from typing import List, Union, BinaryIO
 from zipfile import ZipFile
@@ -131,6 +132,10 @@ def get_valid_name(original_name):
     return prefix + re.sub("[^0-9a-zA-Z_]+", "", remainder)
 
 
+def get_file_url(fn):
+    return "file:" + urllib.request.pathname2url(fn)
+
+
 def prepare_base_state(base_url: str, solve: bool, directory: str = None):
     from nexinfosys import initialize_configuration
     initialize_configuration()  # Needed to make download and NIS later work properly
@@ -140,8 +145,8 @@ def prepare_base_state(base_url: str, solve: bool, directory: str = None):
     val_name = get_valid_name(base_url)
     if directory is None:
         directory = tempfile.gettempdir()
-    hash_file = f"{directory}{os.sep}base.hash.{val_name}"
-    state_file = f"{directory}{os.sep}base.state.{val_name}"
+    hash_file = os.path.join(f"{directory}", f"base.hash.{val_name}")
+    state_file = os.path.join(f"{directory}", f"base.state.{val_name}")
     if os.path.isfile(hash_file) and os.path.isfile(state_file):
         with open(hash_file, "rb") as f:
             cached_hash = f.read()
@@ -154,7 +159,7 @@ def prepare_base_state(base_url: str, solve: bool, directory: str = None):
         temp_name = temp_name.name
         with open(temp_name, "wb") as f:
             f.write(bytes_io.getvalue())
-        nis, issues = read_submit_solve_nis_file("file://"+temp_name, None, solve=solve)
+        nis, issues = read_submit_solve_nis_file(get_file_url(temp_name), None, solve=solve)
         os.remove(temp_name)
         any_error = False
         for issue in issues:
