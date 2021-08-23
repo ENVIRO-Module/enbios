@@ -8,9 +8,12 @@ import time
 from multiprocessing import Pool, cpu_count
 import itertools
 import tempfile
+
+import nexinfosys
 import pandas as pd
 from typing import Tuple, Dict, Set, List
 from NamedAtomicLock import NamedAtomicLock
+from nexinfosys.command_generators import IType
 
 from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue, strcmp
 from nexinfosys.embedded_nis import NIS
@@ -42,6 +45,7 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
                                                  List[SimStructuralProcessorAttributes]],
                                     s_state: bytes,
                                     output_dir: str,
+                                    additional_nis_file: str,
                                     generate_nis_fragment_file: bool,
                                     generate_interface_results: bool,
                                     generate_indicators: bool,
@@ -54,6 +58,8 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
     :param param: A Tuple with the information to drive the process
     :param s_state: A "bytes" with Serialized state (deserialized inside)
     :param output_dir: Outputs directory
+    :param additional_nis_file: URL of a NIS file that would go after state and before the fragment,
+                                parsed everytime (for experiments)
     :param generate_nis_fragment_file: True to generate an expanded NIS file for the fragment
     :param generate_interface_results: True to generate a NIS file with the values of interfaces after solving
     :param generate_indicators: True to generate a file with all indicators
@@ -117,8 +123,11 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
     nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
                                                                          f_metadata, f_processors,
                                                                          output_dir,
+                                                                         additional_nis_file,
                                                                          max_lci_interfaces,
-                                                                         keep_fragment_file)
+                                                                         keep_fragment_file,
+                                                                         generate_nis_fragment_file,
+                                                                         generate_interface_results)
 
     end = time.time()  # Stop timing
     print(f"Fragment processed in {end - start} seconds ---------------------------------------")
@@ -296,9 +305,15 @@ class Enviro:
             print("Base processed and cached, exiting because 'just_prepare_base == True'")
             sys.exit(1)
 
+        if "explorative_nis_file_location" in self._cfg:
+            additional_nis_file = self._cfg["explorative_nis_file_location"]
+        else:
+            additional_nis_file = None
+
         # [Write Base as a full NIS file]
         if generate_nis_base_file:
-            nis_file, _, _ = run_nis_for_indicators(None, deserialize_state(serial_state))
+            issues, new_state, results = run_nis_for_results(None, None, deserialize_state(serial_state), ["model"])
+            nis_file = results[0]
             with open(os.path.join(output_dir, "nis_base.idempotent.xlsx"), "wb") as f:
                 f.write(nis_file)
 
@@ -317,6 +332,7 @@ class Enviro:
                 # print(f"{partial_key}: {len(frag_processors)}")
                 parallelizable_process_fragment((frag_label, partial_key, frag_metadata, frag_processors), serial_state,
                                                 output_dir,
+                                                additional_nis_file,
                                                 generate_nis_fragment_file, generate_interface_results,
                                                 generate_indicators, max_lci_interfaces, keep_fragment_file)
 
@@ -331,6 +347,7 @@ class Enviro:
             p.map(functools.partial(parallelizable_process_fragment,
                                     s_state=serial_state,
                                     output_dir=output_dir,
+                                    additional_nis_file=additional_nis_file,
                                     generate_nis_fragment_file=generate_nis_fragment_file,
                                     generate_interface_results=generate_interface_results,
                                     generate_indicators=generate_indicators,
@@ -338,43 +355,76 @@ class Enviro:
                   fragments)
 
 
-def run_nis_for_indicators(nis_file_name, state):
-    nis = NIS()
-    nis.open_session(True, state)
-    if nis_file_name:
-        nis.load_workbook(get_file_url(nis_file_name))
-    elif isinstance(state, State):
-        nis.append_command("Ignore me", list_to_dataframe([["dummy"], ["dummy"]]))
-    issues = nis.submit_and_solve()
-    tmp = nis.query_available_datasets()
-    if not any_error_issue(issues):
-        error = False
-        outputs = nis.get_results([
-            ("model", "Model.xlsx"),
-            ("dataset", "flow_graph_solution_indicators", "csv"),
-            ("dataset", "flow_graph_solution", "csv"),
-        ])
-    else:
-        error = True
-        outputs = nis.get_results([
-            ("model", "Model.xlsx")
-        ])
-    if not error:
-        df_indicators = outputs[1][0] if outputs[1][2] else pd.DataFrame()
-        df_interfaces = outputs[2][0] if outputs[2][2] else pd.DataFrame()
-    else:
-        df_indicators = pd.DataFrame()
-        df_interfaces = pd.DataFrame()
-    nis_file = outputs[0][0]
-    # with open(nis_file_name+".idem.xlsx", "wb") as f:
-    #     f.write(outputs[0][0])
+def run_nis_for_results(nis_file_name: str,
+                        additional_nis_file: str,
+                        _state: State,
+                        requested_outputs: List[Tuple] = None):
+    """
+    Call to NIS and return results
 
-    # TODO Obtain indicators matrix:
-    #   (scenario, processor, region, time, ¿carrier?) -> (i1, ..., in)
-    # TODO Append to global indicators matrix (this could be done sending results and another process
-    #  would be in charge of assembling)
+    :param nis_file_name: File to process
+    :param additional_nis_file: URL of a NIS file that would go after state and before the fragment,
+                                parsed everytime (for experiments)
+    :param _state: Initial State assumed by the file to process
+    :param requested_outputs:
+    :return: Issues, new State, and either: a) the requested outputs (None entry if error) or
+                                            b) a list of available outputs
+    """
+    outputs = {
+        "flow_graph_solution": ("dataset", "flow_graph_solution", "csv"),
+        "flow_graph_solution_indicators": ("dataset", "flow_graph_solution_indicators", "csv"),
+        "flow_graph_solution_edges": ("dataset", "flow_graph_solution_edges", "csv"),
+        "flow_graph_global_indicators": ("dataset", "flow_graph_global_indicators", "csv"),
+        "flow_graph_solution_benchmarks": ("dataset", "flow_graph_solution_benchmarks", "csv"),
+        "flow_graph_solution_global_benchmarks": ("dataset", "flow_graph_solution_global_benchmarks", "csv"),
+        "benchmarks_and_stakeholders": ("dataset", "benchmarks_and_stakeholders", "csv"),
+        "model": ("model", "Model.xlsx"),
+        "interfaces_graph": ("graph", "interfaces_graph.visjs"),
+        "processors_graph": ("graph", "processors_graph.visjs"),
+        "processors_geolayer": ("geolayer", "processors_geolayer.geojson"),
+    }
+    nis = NIS()
+    nis.open_session(True, _state)
+    if nis_file_name:
+        if additional_nis_file:
+            nis.load_workbook(additional_nis_file)
+        nis.load_workbook(get_file_url(nis_file_name))
+        issues = nis.submit_and_solve()
+        error = any_error_issue(issues)
+        new_state = nis.get_state()
+    elif isinstance(_state, State):
+        # nis.append_command("Ignore me", list_to_dataframe([["dummy"], ["dummy"]]))
+        issues = []
+        error = False
+        new_state = _state
+    else:
+        issues = [nexinfosys.Issue(itype=IType.ERROR,
+                                   description=f"At least NIS file or initial State must be specified",
+                                   location=None)]
+        error = True
+        new_state = None
+    if not error:
+        if requested_outputs:
+            _ = []
+            for r in requested_outputs:
+                if isinstance(r, str):
+                    if r in outputs:
+                        _.append(outputs[r])
+                    else:
+                        issues.append(nexinfosys.Issue(itype=IType.ERROR,
+                                                       description=f"Dataset '{r}' not registered",
+                                                       location=None))
+                elif isinstance(r, tuple):
+                    _.append(r)
+            _ = [r[0] if r[2] else None for r in nis.get_results(_)]
+        else:
+            _ = nis.query_available_datasets()
+    else:
+        _ = []
+
     nis.close_session()
-    return nis_file, df_indicators, df_interfaces
+
+    return issues, new_state, _
 
 
 def process_fragment(base_serial_state: bytes,
@@ -382,8 +432,12 @@ def process_fragment(base_serial_state: bytes,
                      fragment_metadata: Dict[str, Set[str]],
                      fragment_processors: List[SimStructuralProcessorAttributes],
                      output_directory: str,
+                     additional_nis_file: str,
                      max_lci_interfaces: int,
-                     keep_fragment_file: bool):
+                     keep_fragment_file: bool,
+                     generate_nis_fragment_file: bool,
+                     generate_interface_results: bool
+                     ):
     """
     :param base_serial_state: A "bytes" with Serialized state (deserialized inside)
     :param partial_key: A dictionary describing the fragment dimensions
@@ -391,31 +445,37 @@ def process_fragment(base_serial_state: bytes,
     :param fragment_processors: A list of the structural processor attributes (read from simulation output)
                                 inside the fragment.
     :param output_directory: Outputs directory
+    :param additional_nis_file: URL of a NIS file that would go after state and before the fragment,
+                                parsed everytime (for experiments)
     :param max_lci_interfaces: If >0, cut the LCI interfaces used to that number
     :param keep_fragment_file: If True, do not remove the minimal fragment file submitted to NIS
+    :param generate_nis_fragment_file: If True generate the idempotent NIS model
+    :param generate_interface_results: If True generate the interface results (used to do the indicator calculations)
 
-        Different assembly options
-         * Dendrogram functional processors: a clone per region / a fragment per region (so no need to clone)
-        TODO * Structural processors: currently there is a list of structural processors attached to the last level of
-         functional processors, with a .spold file associated with them.
-         When a simulation processor is found, associate it with one of these processors ("correspondence" file)
-         * If there is a .spold file associated to the simulation processor, use it
-         * If there is no .spold file and the "parent processor" has one:
-           - attach the simulation processor to the parent processor
-           - use the
+    Different assembly options
+     * Dendrogram functional processors: a clone per region / a fragment per region (so no need to clone)
+    Spold:
+     * Structural processors: currently there is a list of structural (not-accounted) processors attached to the
+     last level of functional processors, with a .spold file associated with them.
+     When a simulation processor is found, associate it with one of these processors (equal "tech" name)
+     * If there is a .spold file associated to the structural processor associated to the simulation, use it
+     * If there is no .spold file linked to this processor and the "parent processor" has one:
+       - attach the simulation processor to the parent processor
+       - use the spold file of the parent
 
-    * if spold(Sim) is None
-        if spold(P(Sim)) -> spold(Sim) = spold(P(Sim))
-        else ERR
-      else OK
-      INSERT Sim interfaces
-      output_interface_name <- name of the output interface from interfaces in the simulation processor
-      for spold_proc in spold(Sim)
-        for each interface in spold_proc
-          INSERT interface, make them relative_to "output_interface_name"
-      COPY all interfaces of spold(Sim) to Sim (insert "interfaces") and make them relative_to the output interface
+     Something like:
+          if spold(Sim) is None
+            if spold(P(Sim)) -> spold(Sim) = spold(P(Sim))
+            else ERR
+          else OK
+          INSERT Sim interfaces
+          output_interface_name <- name of the output interface from interfaces in the simulation processor
+          for spold_proc in spold(Sim)
+            for each interface in spold_proc
+              INSERT interface, make them relative_to "output_interface_name"
+          COPY all interfaces of spold(Sim) to Sim (insert "interfaces") and make them relative_to the output interface
 
-    * if skip_aux_structural AND is_structural(P(Sim)) AND is_not_accounted(P(Sim)) -> P(Sim) = P(P(Sim))
+          if skip_aux_structural AND is_structural(P(Sim)) AND is_not_accounted(P(Sim)) -> P(Sim) = P(P(Sim))
     """
 
     def _get_processors_by_type():
@@ -659,7 +719,7 @@ def process_fragment(base_serial_state: bytes,
         # Add "Accounted Structural" Processors, hanging from each parent
         for parent_p in matches:
             # NEW PROCESSOR NAME: technology + carrier + region
-            p_name = f"{proc.attrs['technology']}_{proc.attrs['carrier']}_{region}"
+            p_name = f"{proc.attrs['technology']}_{proc.attrs['carrier']}"
             if p_name in techs_used_in_regions:
                 return_simple = False
             else:
@@ -723,16 +783,17 @@ def process_fragment(base_serial_state: bytes,
             already_added_lci.add((proc_name, proc_parent_name))
 
             for cp in lci_matches:
-                for cont, i in enumerate(cp.factors):
+                cont = 0
+                for i in cp.factors:
                     if cont >= max_lci_interfaces:
                         break  # Artificial limit to reduce file size, for test purposes
-
                     if not _interface_used_in_some_indicator(
                             i.name):  # Economy of the model: avoid specifying interfaces not used later
                         continue
                     q = i.quantitative_observations[0]
                     if q.attributes.get("relative_to", None) is None:
                         continue
+                    cont += 1
                     unit = q.attributes.get("unit")  # TODO unit / relative_to_unit
                     orientation = i.attributes.get("orientation", "")
                     v = q.value
@@ -772,7 +833,7 @@ def process_fragment(base_serial_state: bytes,
     if clone:
         _add_clone(cloners, clone_processors, fragment_metadata["regions"], dendrogram_musiasem_procs)
     else:
-        # Also, modify all parent processors system to region "r"
+        # Modify all parent processors system to region "r"
         if len(fragment_metadata["regions"]) == 1:
             r = next(iter(fragment_metadata["regions"]))
             for p in dendrogram_musiasem_procs.values():
@@ -825,7 +886,23 @@ def process_fragment(base_serial_state: bytes,
         print(f'frag_file = "{nis_file_name}"')
         try:
             print(f"Processing NIS file ...")  # for: {fragment_metadata}")
-            nis_idempotent, df_indicators, df_interfaces = run_nis_for_indicators(nis_file_name, state)
+            _ = ["flow_graph_solution_indicators"]
+            if generate_interface_results:
+                _.append("flow_graph_solution")
+            if generate_nis_fragment_file:
+                _.append("model")
+
+            issues, new_state, ds = run_nis_for_results(nis_file_name, additional_nis_file, state, _)
+            df_indicators = ds[0]
+            if generate_interface_results:
+                df_interfaces = ds[1]
+            else:
+                df_interfaces = None
+            if generate_nis_fragment_file:
+                nis_idempotent = ds[2] if len(ds) == 3 else ds[1]
+            else:
+                nis_idempotent = None
+
             print(f"File processing done, shape of 'Indicators' dataset: {df_indicators.shape}")
         finally:
             if not keep_fragment_file:
@@ -846,7 +923,7 @@ if __name__ == '__main__':
     if os.path.exists(frag_file):
         # state = deserialize_state(prepare_base_state(base, solve=False))
         state = None
-        file, df1, df2 = run_nis_for_indicators(frag_file, state)
+        file, df1, df2 = run_nis_for_results(frag_file, None, state)
         df1.to_csv("~/Downloads/df1.csv", index=False)
         df2.to_csv("~/Downloads/df2.csv", index=False)
     else:
