@@ -45,7 +45,7 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
                                                  List[SimStructuralProcessorAttributes]],
                                     s_state: bytes,
                                     output_dir: str,
-                                    additional_nis_file: str,
+                                    development_nis_file: str,
                                     generate_nis_fragment_file: bool,
                                     generate_interface_results: bool,
                                     generate_indicators: bool,
@@ -58,7 +58,7 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
     :param param: A Tuple with the information to drive the process
     :param s_state: A "bytes" with Serialized state (deserialized inside)
     :param output_dir: Outputs directory
-    :param additional_nis_file: URL of a NIS file that would go after state and before the fragment,
+    :param development_nis_file: URL of a NIS file that would go after state and before the fragment,
                                 parsed everytime (for experiments)
     :param generate_nis_fragment_file: True to generate an expanded NIS file for the fragment
     :param generate_interface_results: True to generate a NIS file with the values of interfaces after solving
@@ -123,7 +123,7 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
     nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
                                                                          f_metadata, f_processors,
                                                                          output_dir,
-                                                                         additional_nis_file,
+                                                                         development_nis_file,
                                                                          max_lci_interfaces,
                                                                          keep_fragment_file,
                                                                          generate_nis_fragment_file,
@@ -305,10 +305,10 @@ class Enviro:
             print("Base processed and cached, exiting because 'just_prepare_base == True'")
             sys.exit(1)
 
-        if "explorative_nis_file_location" in self._cfg:
-            additional_nis_file = self._cfg["explorative_nis_file_location"]
+        if "development_nis_file_location" in self._cfg:
+            development_nis_file = self._cfg["development_nis_file_location"]
         else:
-            additional_nis_file = None
+            development_nis_file = None
 
         # [Write Base as a full NIS file]
         if generate_nis_base_file:
@@ -332,7 +332,7 @@ class Enviro:
                 # print(f"{partial_key}: {len(frag_processors)}")
                 parallelizable_process_fragment((frag_label, partial_key, frag_metadata, frag_processors), serial_state,
                                                 output_dir,
-                                                additional_nis_file,
+                                                development_nis_file,
                                                 generate_nis_fragment_file, generate_interface_results,
                                                 generate_indicators, max_lci_interfaces, keep_fragment_file)
 
@@ -347,7 +347,7 @@ class Enviro:
             p.map(functools.partial(parallelizable_process_fragment,
                                     s_state=serial_state,
                                     output_dir=output_dir,
-                                    additional_nis_file=additional_nis_file,
+                                    development_nis_file=development_nis_file,
                                     generate_nis_fragment_file=generate_nis_fragment_file,
                                     generate_interface_results=generate_interface_results,
                                     generate_indicators=generate_indicators,
@@ -356,14 +356,14 @@ class Enviro:
 
 
 def run_nis_for_results(nis_file_name: str,
-                        additional_nis_file: str,
+                        development_nis_file: str,
                         _state: State,
                         requested_outputs: List[Tuple] = None):
     """
     Call to NIS and return results
 
     :param nis_file_name: File to process
-    :param additional_nis_file: URL of a NIS file that would go after state and before the fragment,
+    :param development_nis_file: URL of a NIS file that would go after state and before the fragment,
                                 parsed everytime (for experiments)
     :param _state: Initial State assumed by the file to process
     :param requested_outputs:
@@ -386,8 +386,8 @@ def run_nis_for_results(nis_file_name: str,
     nis = NIS()
     nis.open_session(True, _state)
     if nis_file_name:
-        if additional_nis_file:
-            nis.load_workbook(additional_nis_file)
+        if development_nis_file:
+            nis.load_workbook(development_nis_file)
         nis.load_workbook(get_file_url(nis_file_name))
         issues = nis.submit_and_solve()
         error = any_error_issue(issues)
@@ -432,7 +432,7 @@ def process_fragment(base_serial_state: bytes,
                      fragment_metadata: Dict[str, Set[str]],
                      fragment_processors: List[SimStructuralProcessorAttributes],
                      output_directory: str,
-                     additional_nis_file: str,
+                     development_nis_file: str,
                      max_lci_interfaces: int,
                      keep_fragment_file: bool,
                      generate_nis_fragment_file: bool,
@@ -445,7 +445,7 @@ def process_fragment(base_serial_state: bytes,
     :param fragment_processors: A list of the structural processor attributes (read from simulation output)
                                 inside the fragment.
     :param output_directory: Outputs directory
-    :param additional_nis_file: URL of a NIS file that would go after state and before the fragment,
+    :param development_nis_file: URL of a NIS file that would go after state and before the fragment,
                                 parsed everytime (for experiments)
     :param max_lci_interfaces: If >0, cut the LCI interfaces used to that number
     :param keep_fragment_file: If True, do not remove the minimal fragment file submitted to NIS
@@ -892,7 +892,7 @@ def process_fragment(base_serial_state: bytes,
             if generate_nis_fragment_file:
                 _.append("model")
 
-            issues, new_state, ds = run_nis_for_results(nis_file_name, additional_nis_file, state, _)
+            issues, new_state, ds = run_nis_for_results(nis_file_name, development_nis_file, state, _)
             df_indicators = ds[0]
             if generate_interface_results:
                 df_interfaces = ds[1]
