@@ -778,10 +778,11 @@ def process_fragment(base_serial_state: bytes,
         :param matching_tech_proc: Which technology processor matches
         :return:
         """
+
         relative_to = None
         tech_output_name = matching_tech_proc.attributes.get("SimulationVariable")
         tech_desired_output_name = matching_tech_proc.attributes.get("EcoinventCarrierName")
-        tech_output_to_spold_factor = float(matching_tech_proc.attributes.get("EcoinventToSimulationFactor", "1.0"))
+        tech_output_to_spold_factor = float(matching_tech_proc.attributes.get("SimulationToEcoinventFactor", "1.0"))
         observer = get_scenario_name("o", scenario)
         # Interfaces from simulation
         for i in set(proc.attrs.keys()).difference(_idx_cols):
