@@ -274,6 +274,7 @@ class Enviro:
                                                     generate_interface_results: bool = False,
                                                     keep_fragment_file: bool = True,
                                                     generate_indicators: bool = False,
+                                                    fragments_list_file: bool = False,
                                                     max_lci_interfaces: int = 0,
                                                     n_cpus: int = 1,
                                                     just_prepare_base: bool = False):
@@ -287,6 +288,7 @@ class Enviro:
         :param generate_nis_fragment_file: True if the current fragment should be dumped into a NIS formatted XLSX file
         :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
         :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
+        :param fragments_list_file: True if a CSV with the list of fragments should be produced
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
         :param n_cpus: Number of CPUs of the local computer used to perform the process
         :param just_prepare_base: True to only preparing Base file and exit
@@ -328,6 +330,21 @@ class Enviro:
         default_time = self._cfg.get("simulation_default_time")
         fragments = sorted([_ for _ in self._read_simulation_fragments(default_time=default_time)],
                            key=operator.itemgetter(0))
+        if fragments_list_file:
+            possible_columns = dict(_g="Regions", _d="Periods", _s="Scenarios")
+            used_columns = []
+            used_columns_set = set()
+            for fragment in fragments:
+                for key in fragment[1].keys():
+                    if key not in used_columns_set:
+                        used_columns.append(key)
+                        used_columns_set.add(key)
+            s = [", ".join([possible_columns[_] for _ in used_columns])]
+            for fragment in fragments:
+                s.append(", ".join([f"{fragment[1].get(_, '')}" for _ in used_columns]))
+            with open(os.path.join(output_dir, "fragments_list.csv"), "w") as f:
+                f.write("\n".join(s))
+
         logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
         if n_fragments > 0 or first_fragment > 0:
             if n_fragments == 0:

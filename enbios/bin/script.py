@@ -205,6 +205,7 @@ class Enbios:
                generate_full_fragment_files: bool = False,
                generate_interface_results: bool = False,
                generate_indicators: bool = False,
+               fragments_list_file: bool = False,
                keep_min_fragment_files: bool = True,
                max_lci_interfaces: int = 0,
                n_cpus: int = 1,
@@ -228,6 +229,7 @@ class Enbios:
         :param generate_full_fragment_files: True if the current fragment should be dumped into a NIS formatted XLSX file
         :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
         :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
+        :param fragments_list_file: True to generate a file informing of the fragments that can be computed
         :param keep_min_fragment_files: If True, do not delete minimal NIS files submitted to NIS to compute indicators
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
         :param n_cpus: Number of CPUs of the local computer used to perform the process (default 1, sequential)
@@ -240,12 +242,14 @@ class Enbios:
         t = Enviro()
         t.set_cfg_file_path(cfg_file_path)
 
-        t.compute_indicators_from_base_and_simulation(just_one_fragment,
+        t.compute_indicators_from_base_and_simulation(n_fragments,
+                                                      first_fragment,
                                                       generate_nis_base_file,
                                                       generate_full_fragment_files,
                                                       generate_interface_results,
                                                       keep_min_fragment_files,
                                                       generate_indicators,
+                                                      fragments_list_file,
                                                       max_lci_interfaces,
                                                       n_cpus,
                                                       just_prepare_base)
