@@ -9,10 +9,13 @@ A script to read a list of .spold files and obtain a NIS file with the following
 import logging
 import operator
 import os
+import sys
 import traceback
+from os import listdir
+from os.path import isfile, join
 
-import math
-import xlrd
+from nexinfosys.bin.cli_script import print_issues, PrintColors
+from nexinfosys.command_generators import Issue, IType
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import download_file
 from io import StringIO
@@ -41,25 +44,34 @@ def generate_csv(o):
 
 def read_ecospold_file(f):
     lci = None
-    try:
-        if os.path.exists(f) and os.path.isfile(f):
-            lci = Ecospold2DataExtractor.extract(f, "test", use_mp=False)
-        else:
-            msg = f"Ecospold file '{f}' not found"
-    except:
-        msg = f"Exception reading file '{f}'."
-        traceback.print_exc()
+    issues = []
+    found_name = None
+    for name in [f, f"{f}.spold"]:
+        try:
+            if os.path.exists(name) and os.path.isfile(name):
+                found_name = name
+                _original_stdout = sys.stdout
+                _original_stderr = sys.stderr
+                sys.stdout = open(os.devnull, 'w')
+                sys.stderr = sys.stdout
+                lci = Ecospold2DataExtractor.extract(name, "test", use_mp=False)
+                sys.stdout.close()
+                sys.stdout = _original_stdout
+                sys.stderr = _original_stderr
+                lci = lci[0]
+                break
+        except:
+            issues.append(Issue(itype=IType.ERROR, description=f"Exception reading file '{f}': {traceback.format_exc()}"))
+            # traceback.print_exc()
 
-    if lci is None:
-        logging.debug(msg)
-    else:
-        lci = lci[0]
+    if not found_name:
+        issues.append(Issue(itype=IType.ERROR, description=f"File '{f}' (or {f}.spold) not found. Please check '@EcoinventFilename' column in the NIS base file or if the file has not been downloaded into the LCI files folder"))
 
-    return lci
+    return lci, found_name, issues
 
 
 def lci_to_interfaces_csv(lci_file, csv_file):
-    lci_tmp = read_ecospold_file(lci_file)
+    lci_tmp, found_name, issues = read_ecospold_file(lci_file)
     s = generate_csv(lci_tmp["exchanges"])
     with open(csv_file, "wt") as f:
         f.write(s)
@@ -253,6 +265,7 @@ class SpoldToNIS:
             return _cmds
 
         # FUNCTION STARTS HERE -----------------
+        issues = []
 
         # Read the list of Spold files to process
         spolds = []
@@ -268,6 +281,7 @@ class SpoldToNIS:
         interfaces = {}
 
         # Process each .spold file
+        files_in_lci_base = set([join(lci_base, f) for f in listdir(lci_base) if isfile(join(lci_base, f))])
         already_processed = set()
         for spold in spolds:
             file_name = os.path.join(f"{lci_base}", f"{spold['ecoinvent_filename']}")
@@ -277,9 +291,13 @@ class SpoldToNIS:
                 already_processed.add(file_name)
 
             # Read Spold file
-            lci = read_ecospold_file(file_name)
+            lci, found_name, _ = read_ecospold_file(file_name)
+            issues.extend(_)
             if lci is None:
                 continue
+            if found_name:
+                issues.append(Issue(itype=IType.INFO, description=f"LCI file '{os.path.basename(found_name)}' read correctly"))
+                files_in_lci_base.remove(found_name)
 
             # Transform Spold file into usable data structures (pd.DataFrame's)
             df, dfi = _lci_to_dataframe(lci)
@@ -301,7 +319,7 @@ class SpoldToNIS:
                                         carrier_name=spold.get("ecoinvent_carrier_name", ""),
                                         description=lci["comment"])
 
-            # INTERFACE TYPES
+            # INTERFACE TYPES <- dfi
             for idx, r in dfi.iterrows():
                 sphere = "Technosphere" if r["type"].lower() != "biosphere" else "Biosphere"
                 interface_types[get_nis_name(r["name"])] = dict(comment=r.get("comment", ""),
@@ -310,7 +328,7 @@ class SpoldToNIS:
                                                                 unit=r["unit"],
                                                                 lci_name=r["name"])
 
-            # INTERFACES
+            # INTERFACES <- df
             names = {k: v for k, v in zip(df['name'].str.lower().values, df['name'].values)}
             tmp = df.groupby([df['name'].str.lower()]).sum()  # Acumulate (sum) repeated exchange names
 
@@ -328,6 +346,8 @@ class SpoldToNIS:
                     interfaces[(nis_name, i_name)] = dict(value=r["amount"],
                                                         relative_to=relative_to,
                                                         is_output=i_name == main_output)
+        for f in files_in_lci_base:
+            issues.append(Issue(itype=IType.WARNING, description=f"File '{os.path.basename(f)}' not used"))
 
         # Generate InterfaceTypes, BareProcessors and Interfaces commands
         cmds = _generate_commands(interface_types, processors, interfaces)
@@ -339,6 +359,16 @@ class SpoldToNIS:
         if s:
             with open(output_file, "wb") as f:
                 f.write(s)
-        else:
-            print(f"ACHTUNG BITTE!: it was not possible to produce XLSX, probably because no .Spold file was found, "
-                  f"check LCI data folder, {lci_base}, is correctly specified.")
+
+        # Print collected issues
+        print_issues("Spold2NIS", "", issues, f"Please check the issues and output file '{output_file}'")
+
+        if s:
+            print(f"\nNIS file:\n"
+                  f"{PrintColors.BOLD}{output_file}{PrintColors.END}\n"
+                  f"containing information from LCI files generated successfully.\n"
+                  f"Please, refer to this file from the NIS Base file, using an ImportCommands command (worksheet).\n"
+                  f"If NIS Base file is a Google Sheets document:\n"
+                  f" * Upload the generated file to Google Drive,\n"
+                  f" * Go to the uploaded file in Google Drive, open right click menu, 'Get Link' (select 'anybody with the link') and\n"
+                  f" * Copy/paste the link into the appropriate 'ImportCommands' cell (under 'Workbook' column) of NIS base file.")
