@@ -618,23 +618,21 @@ def process_fragment(base_serial_state: bytes,
                     carrier_field = ""
                     if "SimulationCarrier" in proc.attributes:
                         carrier_field = "SimulationCarrier"
-                    elif "ProcessorCarrier" in proc.attributes:
-                        carrier_field = "ProcessorCarrier"
                     elif "EcoinventCarrierName" in proc.attributes:
-                        carrier_field = "EcoinventCarriername"
+                        carrier_field = "EcoinventCarrierName"  # It should never enter here
                     if proc.attributes.get(carrier_field, "").lower() == carrier_:
                         target = proc
                         break
                 else:
                     target = proc  # If "tech" matches and "carrier_" is ""
         if target:
-            lci_proc = _find_pure_lci_processor(target, structural_procs)
+            lci_proc = _find_reference_lci_processor(target, structural_procs)
             if lci_proc is None:
                 # Parent
                 s1 = target.full_hierarchy_names(reg)[0].rsplit(".", 1)[0]
                 for proc_name, proc in base_procs.items():
                     if s1 == proc_name:
-                        lci_proc = _find_pure_lci_processor(proc, structural_procs)
+                        lci_proc = _find_reference_lci_processor(proc, structural_procs)
                         break
         else:
             lci_proc = None
@@ -707,6 +705,7 @@ def process_fragment(base_serial_state: bytes,
             return "dimensionless"
 
     def _interface_used_in_some_indicator(iface):
+        # TODO Implement
         return True
 
     def _add_clone(cloners_list, clone_processors_list, regions, base_musiasem_procs):
