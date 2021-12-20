@@ -578,7 +578,6 @@ def process_fragment(base_serial_state: bytes,
         # SimProc(tech, carrier) ->(child-of)-> FunctMuSProc(ParentProc)
         # SimProc(tech, carrier) as StrucMuSProc(tech, carrier2)
 
-
     def _find_lci_and_tech_processors(reg: PartialRetrievalDictionary, structural_procs, base_procs, p):
         """
         Find LCI Processor(s) which are assimilated to "p"
@@ -594,14 +593,16 @@ def process_fragment(base_serial_state: bytes,
         :param p: Name of the target processor
         :return: List of matching LCI processors, None if "p" is not found; tech processor tech output variable name, desired output name (carrier name)
         """
-        def _find_pure_lci_processor(target, lci_procs):
+        def _find_reference_lci_processor(target: Processor, lci_procs: Dict[str, Processor]):
             lci_proc = None
             ecospold_file = target.attributes.get("EcoinventFilename", "")
             if ecospold_file != "":
                 for proc_name, proc in lci_procs.items():
                     if "." not in proc_name:
                         ecospold_file_2 = proc.attributes.get("EcoinventFilename", "")
-                        if ecospold_file == ecospold_file_2:
+                        if len(ecospold_file) > 10 and len(ecospold_file_2) > 10 and \
+                           (ecospold_file.lower() in ecospold_file_2.lower() or
+                           ecospold_file_2.lower() in ecospold_file.lower()):
                             lci_proc = proc
                             break
             return lci_proc
