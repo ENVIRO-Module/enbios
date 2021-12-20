@@ -793,7 +793,9 @@ def process_fragment(base_serial_state: bytes,
                     i_name = tech_desired_output_name
                 v *= tech_output_to_spold_factor  # Change scale
                 relative_to = i_name  # All LCI interfaces will be relative to main output
-            orientation = get_flow_orientation(i)
+                orientation = "Output"
+            else:
+                orientation = get_flow_orientation(i)
             interfaces.append([proc_name, i_name, "", "", "", orientation, "", "", "", "", v,
                                "", "", "", "", "", "", time_, observer, "", ""])
             if i_name not in variables:
