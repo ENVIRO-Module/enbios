@@ -192,7 +192,7 @@ class Enviro:
         block_types_df = pd.DataFrame()
         return lci_df, nis_df, correspondence_df, block_types_df
 
-    def _read_simulation_fragments(self, split_by_region=True, split_by_scenario=True, split_by_period=True):
+    def _read_simulation_fragments(self, split_by_region=True, split_by_scenario=True, split_by_period=True, default_time=None):
 
         """
         Read simulation. Find fragments and then start an iteration on them
@@ -213,7 +213,7 @@ class Enviro:
         # units: list of units
         # col_types: list of value (not index) fields
         # ctc: list of pairs (tech, region, carrier)
-        prd, scenarios, regions, times, techs, carriers, units, col_types, ctc = simulation.read("")
+        prd, scenarios, regions, times, techs, carriers, units, col_types, ctc = simulation.read("", default_time)
 
         partition_lists = []
         mandatory_attributes = ["carrier", "technology"]
@@ -325,7 +325,9 @@ class Enviro:
             os.remove(indicators_csv_file)
 
         # MAIN LOOP - Split simulation in independent fragments, and process them
-        fragments = sorted([_ for _ in self._read_simulation_fragments()], key=operator.itemgetter(0))
+        default_time = self._cfg.get("simulation_default_time")
+        fragments = sorted([_ for _ in self._read_simulation_fragments(default_time=default_time)],
+                           key=operator.itemgetter(0))
         logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
         if n_fragments > 0 or first_fragment > 0:
             if n_fragments == 0:
