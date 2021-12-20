@@ -3,8 +3,8 @@ import os
 import dash
 import pandas as pd
 from dash.dependencies import Input, Output
-import dash_core_components as dcc
-import dash_html_components as html
+from dash import dcc
+from dash import html
 import dash_pivottable
 import plotly.express as px
 
@@ -271,9 +271,9 @@ def create_dashboard_app(outputs_dir):
                 dash_pivottable.PivotTable(
                     id='table',
                     data=tmp,
-                    cols=["Processor"],
+                    rows=["System", "Processor"],
                     colOrder="key_a_to_z",
-                    rows=["Scenario", "Period", "Indicator"],
+                    cols=["Scenario", "Period", "Indicator"],
                     rowOrder="key_a_to_z",
                     rendererName="",
                     aggregatorName="Average",
