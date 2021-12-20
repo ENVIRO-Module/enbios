@@ -3,7 +3,7 @@ from abc import ABC
 
 class Simulation(ABC):
     """ Abstract simulation reader (the implementation will depend on the type of simulator used) """
-    def read(self, filter_model: str):
+    def read(self, filter_model: str, default_time=None):
         """ Read"""
         pass
 

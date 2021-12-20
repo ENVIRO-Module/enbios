@@ -25,11 +25,12 @@ class SentinelSimulation(Simulation):
             df = to_df(r)
             lst.append(df)
 
-    def read(self, filter_model: str):
+    def read(self, filter_model: str, default_time: str = None):
         """
         Reads Sentinel package completely
 
         :param filter_model: Read only the specified model
+        :param default_time: Default time to use if none specified in the inputs
         :return: A tuple with assorted elements, from lists of possible values for dimensions to a registry of Processors
         """
         if filter_model is None:  # Mandatory
@@ -54,18 +55,19 @@ class SentinelSimulation(Simulation):
             carrier_name = "carrier" if "carrier" in df.index.names else "carriers" if "carriers" in df.index.names else None
             carrier_idx = df.index.names.index(carrier_name) if carrier_name is not None else -1
             tech_idx = df.index.names.index("technology") if "technology" in df.index.names else -1
-            scenario_idx = df.index.names.index("scenario") if "scenario" in df.index.names else -1
-            time_idx = df.index.names.index("year") if "year" in df.index.names else -1
-            time_idx = time_idx if time_idx > -1 else df.index.names.index("time") if "time" in df.index.names else -1
+            scenario_name = "scenario" if "scenario" in df.index.names else "storyline" if "storyline" in df.index.names else None
+            scenario_idx = df.index.names.index(scenario_name) if scenario_name is not None else -1
+            time_name = "time" if "time" in df.index.names else "year" if "year" in df.index.names else None
+            time_idx = df.index.names.index(time_name) if time_name is not None else -1
             unit_idx = df.index.names.index("unit") if "unit" in df.index.names else -1
             for idx, cols in df.iterrows():
                 if not isinstance(idx, tuple):  # When it is not a MultiIndex, Pandas has "idx" to not be a Tuple; workaround: convert into a Tuple of a single element
                     idx = (idx,)
-                region = idx[region_idx] if region_idx >= 0 else None
-                carrier = idx[carrier_idx] if carrier_idx >= 0 else None
-                tech = idx[tech_idx] if tech_idx >= 0 else None
-                scenario = idx[scenario_idx] if scenario_idx >= 0 else None
-                time_ = str(idx[time_idx]) if time_idx >= 0 else None
+                region = get_nis_name(idx[region_idx]) if region_idx >= 0 else None
+                carrier = get_nis_name(idx[carrier_idx]) if carrier_idx >= 0 else None
+                tech = get_nis_name(idx[tech_idx]) if tech_idx >= 0 else None
+                scenario = get_nis_name(idx[scenario_idx]) if scenario_idx >= 0 else None
+                time_ = str(idx[time_idx]) if time_idx >= 0 else default_time
                 unit_ = idx[unit_idx] if unit_idx >= 0 else None
                 if region:
                     regions.add(region)
@@ -84,8 +86,11 @@ class SentinelSimulation(Simulation):
                 if not region and not scenario and not time_:
                     region = scenario = time_ = "-"
                 # -- Add COLS information --
-                # (tech, region, scenario, time) - (cols)
                 k = SimStructuralProcessorAttributes.partial_key(tech, region, carrier, scenario, time_)
+                if tech is None or not region or region == "-":
+                    # print(f"WARNING: Missing Tech and/or Region: {k}. Skipped")
+                    continue
+                # (tech, region, scenario, time) - (cols)
                 o = prd.get(k)
                 if len(o) == 0:
                     pa = SimStructuralProcessorAttributes(tech, region, carrier, scenario, time_)
@@ -151,11 +156,11 @@ class SentinelSimulation(Simulation):
                         "<description>", "<unit>", "<opposite>", ""])
         cmds.append(("InterfaceTypes", list_to_dataframe(lst)))
 
-        # Georeferences
-        geo_references = []
-        for r in regions:
-            # Georeferences (regions)
-            print(r)
+        # # Georeferences
+        # geo_references = []
+        # for r in regions:
+        #     # Georeferences (regions)
+        #     print(r)
 
         # ProblemStatement
         lst = [["Scenario", "Parameter", "Value", "Description"]]
