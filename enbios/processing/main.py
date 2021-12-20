@@ -2,34 +2,30 @@ import functools
 import logging
 import operator
 import os
-import urllib.request
 import sys
 import time
 from multiprocessing import Pool, cpu_count
 import itertools
-import tempfile
 
-import nexinfosys
 import pandas as pd
-from typing import Tuple, Dict, Set, List
+from typing import Tuple, Dict, Set, List, Optional
 from NamedAtomicLock import NamedAtomicLock
-from nexinfosys.command_generators import IType
+from friendly_data.converters import from_df
+from nexinfosys.bin.cli_script import get_valid_name, get_file_url, prepare_base_state, print_issues
+from nexinfosys.command_generators import IType, Issue
 
-from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue, strcmp
+from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue
 from nexinfosys.embedded_nis import NIS
 from nexinfosys.model_services import State
 from nexinfosys.models.musiasem_concepts import Processor, ProcessorsRelationPartOfObservation
 from nexinfosys.serialization import deserialize_state
 
-from enbios.common.helper import generate_workbook, prepare_base_state, list_to_dataframe, get_valid_name, \
-    get_scenario_name, get_file_url
+from enbios.common.helper import generate_workbook, list_to_dataframe, get_scenario_name
 from enbios.input import Simulation
 from enbios.input.lci import LCIIndex
-# from enbios.input.simulators.calliope import CalliopeSimulation
 from enbios.input.simulators.sentinel import SentinelSimulation
 from enbios.model import SimStructuralProcessorAttributes
 from enbios.processing import read_parse_configuration, read_submit_solve_nis_file
-from enbios.processing.model_merger import Matcher
 
 
 #####################################################
@@ -78,35 +74,58 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
         :return:
         """
         print("Writing results ...")
-        # Main result: "indicators.csv" file (aggregates all fragments)
-        lock = NamedAtomicLock("enbios-lock")
-        lock.acquire()
-        try:
-            indicators_csv_file = os.path.join(output_dir, f"indicators.csv")
-            if not os.path.isfile(indicators_csv_file):
-                df_indicators.to_csv(indicators_csv_file, index=False)
-            else:
-                df_indicators.to_csv(indicators_csv_file, index=False, mode='a', header=False)
-        finally:
-            lock.release()
 
-        # Write a separate indicators.csv for the fragment
-        if generate_indicators:
-            csv_name = os.path.join(output_dir, f"fragment_indicators{get_valid_name(str(p_key))}.csv")
-            if not df_indicators.empty:
-                df_indicators.to_csv(csv_name, index=False)
-            else:
-                with open(csv_name, "wt") as f:
-                    f.write("Could not obtain indicator values (??)")
+
+        # self._simulation_files_path
+        # TODO Write the indicators using Sentinel-friendly-data-IAMC format
+        #  from friendly_data.io import dwim_file (Do What I Mean)
+        #  from friendly_data.iamc import IAMconv
+        #  from friendly_data.dpkg import pkgindex
+        #  conf = dwim_file("conf.yaml")
+        #  conf["indices"]
+        #  idx = pkgindex.from_file("index.yaml")
+        #  converter = IAMconv(idx, conf["indices"], basepath="<location>")
+        #  conf2 = conf["indices"]
+        #  conf2["year"] = 2050
+        #  converter2 = IAMconv(idx, conf2, basepath="")
+        #  converter.to_csv o to_df
+        #  .
+        #  Also, e-mail from Suvayu
+        # try:
+        #     res = from_df(df_indicators, output_dir, os.path.join(output_dir, f"indicators_fd.csv"))
+        # except:
+        #     traceback.print_exc()
+        # Main result: "indicators.csv" file (aggregates all fragments)
+
+        if df_indicators is not None:
+            lock = NamedAtomicLock("enbios-lock")
+            lock.acquire()
+            try:
+                indicators_csv_file = os.path.join(output_dir, f"indicators.csv")
+                if not os.path.isfile(indicators_csv_file):
+                    df_indicators.to_csv(indicators_csv_file, index=False)
+                else:
+                    df_indicators.to_csv(indicators_csv_file, index=False, mode='a', header=False)
+            finally:
+                lock.release()
+
+            # Write a separate indicators.csv for the fragment
+            if generate_indicators:
+                csv_name = os.path.join(output_dir, f"fragment_indicators{get_valid_name(str(p_key))}.csv")
+                if not df_indicators.empty:
+                    df_indicators.to_csv(csv_name, index=False)
+                else:
+                    with open(csv_name, "wt") as f:
+                        f.write("Could not obtain indicator values (??)")
 
         # Write NIS of the fragment just processed
-        if generate_nis_fragment_file:
+        if generate_nis_fragment_file and nis_idempotent_file is not None:
             fragment_file_name = os.path.join(output_dir, f"full_fragment{get_valid_name(str(p_key))}.xlsx")
             with open(fragment_file_name, "wb") as f:
                 f.write(nis_idempotent_file)
 
         # Write Dataset with values for each interface as calculated by NIS solver, for the fragment
-        if generate_interface_results:
+        if generate_interface_results and df_interfaces is not None:
             csv_name = os.path.join(output_dir, f"fragment_interfaces{get_valid_name(str(p_key))}.csv")
             if not df_interfaces.empty:
                 df_interfaces.to_csv(csv_name, index=False)
@@ -140,25 +159,28 @@ class Enviro:
     def __init__(self):
         self._cfg_file_path = None
         self._cfg = None
+        self._simulation_files_path = None
 
     def set_cfg_file_path(self, cfg_file_path):
         self._cfg = read_parse_configuration(cfg_file_path)
         self._cfg_file_path = os.path.realpath(cfg_file_path) if isinstance(cfg_file_path, str) else None
+        if "simulation_files_path" in self._cfg:
+            self._simulation_files_path = self._cfg["simulation_files_path"]
 
     def _get_simulation(self) -> Simulation:
         # Simulation
         simulation = None
         if self._cfg["simulation_type"].lower() == "sentinel":
-            simulation = SentinelSimulation(self._cfg["simulation_files_path"])
+            simulation = SentinelSimulation(self._simulation_files_path)
         # elif self._cfg["simulation_type"].lower() == "calliope":
-        #     simulation = CalliopeSimulation(self._cfg["simulation_files_path"])
+        #     simulation = CalliopeSimulation(self._simulation_files_path)
         return simulation
 
     def _prepare_process(self) -> Tuple[NIS, LCIIndex, Simulation]:
         # Simulation
         simulation = self._get_simulation()
         # MuSIASEM (NIS)
-        nis = read_submit_solve_nis_file(self._cfg["nis_file_location"], state=None, solve=False)
+        nis, issues = read_submit_solve_nis_file(self._cfg["nis_file_location"], state=None, solve=False)
         # LCI index
         lci_data_index = LCIIndex(self._cfg["lci_data_locations"])
 
@@ -304,7 +326,14 @@ class Enviro:
         os.makedirs(output_dir, exist_ok=True)
 
         # Prepare Base
-        serial_state = prepare_base_state(self._cfg["nis_file_location"], False, output_dir)
+        state, serial_state, issues = prepare_base_state(self._cfg["nis_file_location"], False, output_dir)
+
+        if not state:
+            logging.debug(f"NIS BASE PREPARATION FAILED")
+            print_issues("NIS base preparation", self._cfg["nis_file_location"], issues,
+                         f"Base not ready due to errors, exiting. Please check the issues")
+            sys.exit(1)
+
         if just_prepare_base:
             print("Base processed and cached, exiting because 'just_prepare_base == True'")
             sys.exit(1)
@@ -316,7 +345,7 @@ class Enviro:
 
         # [Write Base as a full NIS file]
         if generate_nis_base_file:
-            issues, new_state, results = run_nis_for_results(None, None, deserialize_state(serial_state), ["model"])
+            issues, new_state, results = run_nis_for_results(None, None, state, ["model"])
             nis_file = results[0]
             with open(os.path.join(output_dir, "nis_base.idempotent.xlsx"), "wb") as f:
                 f.write(nis_file)
@@ -380,8 +409,8 @@ class Enviro:
                   fragments)
 
 
-def run_nis_for_results(nis_file_name: str,
-                        development_nis_file: str,
+def run_nis_for_results(nis_file_name: Optional[str],
+                        development_nis_file: Optional[str],
                         _state: State,
                         requested_outputs: List[Tuple] = None):
     """
@@ -423,9 +452,9 @@ def run_nis_for_results(nis_file_name: str,
         error = False
         new_state = _state
     else:
-        issues = [nexinfosys.Issue(itype=IType.ERROR,
-                                   description=f"At least NIS file or initial State must be specified",
-                                   location=None)]
+        issues = [Issue(itype=IType.ERROR,
+                        description=f"At least NIS file or initial State must be specified",
+                        location=None)]
         error = True
         new_state = None
     if not error:
@@ -436,9 +465,9 @@ def run_nis_for_results(nis_file_name: str,
                     if r in outputs:
                         _.append(outputs[r])
                     else:
-                        issues.append(nexinfosys.Issue(itype=IType.ERROR,
-                                                       description=f"Dataset '{r}' not registered",
-                                                       location=None))
+                        issues.append(Issue(itype=IType.ERROR,
+                                            description=f"Dataset '{r}' not registered",
+                                            location=None))
                 elif isinstance(r, tuple):
                     _.append(r)
             _ = [r[0] if r[2] else None for r in nis.get_results(_)]
@@ -549,34 +578,6 @@ def process_fragment(base_serial_state: bytes,
         # SimProc(tech, carrier) ->(child-of)-> FunctMuSProc(ParentProc)
         # SimProc(tech, carrier) as StrucMuSProc(tech, carrier2)
 
-        target = None  # type: Processor
-        tech = p.name  # p.attrs["technology"].lower()
-        carrier = p.attributes.get("EcoinventCarrierName")  #p.attrs["carrier"].lower()  # Mandatory
-        for proc_name, proc in base_procs.items():
-            last = proc_name.split(".")[-1]
-            if tech == last.lower():
-                target = proc
-                break
-        if target:
-            _ = []  # No leaf nodes, just parents
-            for n in target.full_hierarchy_names(registry):
-                s1 = n.rsplit(".", 1)
-                if len(s1) > 1:
-                    _.append(s1[0])
-            tmp = {}
-            for n in _:
-                p_tmp = registry.get(Processor.partial_key(name=n))[0]
-                # Add parent IF parent has the same carrier
-                p_carrier = p_tmp.attributes.get("EcoinventCarrierName", "").lower()
-                if carrier == p_carrier:
-                    tmp[n] = p_tmp
-            if len(tmp) == 0:  # If no parent matched the carrier, maybe the property was not defined
-                print(f"None of the parents {_} had the carrier '{carrier}' for processor {p}. Adding all of them")
-                tmp = {n: registry.get(Processor.partial_key(name=n))[0] for n in _}
-
-            return tmp
-        else:
-            return None  # Not found, cannot tell if it has parents
 
     def _find_lci_and_tech_processors(reg: PartialRetrievalDictionary, structural_procs, base_procs, p):
         """
@@ -864,7 +865,7 @@ def process_fragment(base_serial_state: bytes,
             for p in dendrogram_musiasem_procs.values():
                 p.processor_system = r
 
-    # FOR EACH SIMULATION PROCESSOR
+    # FOR EACH SIMULATION PROCESSOR (of the fragment)
     for p in fragment_processors:
         # Update time and scenario
         # (they can change from entry to entry, but for MuSIASEM the same functional Processor is used)
@@ -918,17 +919,22 @@ def process_fragment(base_serial_state: bytes,
                 _.append("model")
 
             issues, new_state, ds = run_nis_for_results(nis_file_name, development_nis_file, state, _)
-            df_indicators = ds[0]
-            if generate_interface_results:
-                df_interfaces = ds[1]
+            if ds:
+                df_indicators = ds[0]
+                if generate_interface_results:
+                    df_interfaces = ds[1]
+                else:
+                    df_interfaces = None
+                if generate_nis_fragment_file:
+                    nis_idempotent = ds[2] if len(ds) == 3 else ds[1]
+                else:
+                    nis_idempotent = None
+                print(f"File processing done, shape of 'Indicators' dataset: {df_indicators.shape}")
             else:
-                df_interfaces = None
-            if generate_nis_fragment_file:
-                nis_idempotent = ds[2] if len(ds) == 3 else ds[1]
-            else:
-                nis_idempotent = None
+                nis_idempotent, df_indicators, df_interfaces = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
+                print(f"There were issues processing fragment file: {nis_file_name}")
+                print_issues("Solving fragment", nis_file_name, issues, f"Please check the issues resulting from solving fragment '{nis_file_name}'")
 
-            print(f"File processing done, shape of 'Indicators' dataset: {df_indicators.shape}")
         finally:
             if not keep_fragment_file:
                 os.remove(nis_file_name)
