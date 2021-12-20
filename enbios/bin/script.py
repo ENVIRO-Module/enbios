@@ -47,7 +47,12 @@ class Enbios:
         convert_recipe_to_nis(recipe_file, lcia_file)
 
     @staticmethod
-    def lcia_implementation_to_csv(lcia_implementation_file: str, lcia_file: str, log: str = None):
+    def lcia_implementation_to_csv(lcia_implementation_file: str,
+                                   lcia_file: str,
+                                   method_like: str = "",
+                                   include_obsolete: bool = False,
+                                   use_nis_name_syntax: bool = True,
+                                   log: str = None):
         """
         Convert an XLSX file with LCIA implementation (from Ecoinvent) to a CSV file ready to be declared in a
         DatasetDef which can later be imported in a "LCIAMethod" command
@@ -56,13 +61,16 @@ class Enbios:
            enbios lcia_implementation_to_csv /home/rnebot/GoogleDrive/AA_SENTINEL/LCIA_implementation_3.7.1.xlsx /home/rnebot/GoogleDrive/AA_SENTINEL/case_studies/library/lcia_implementation_nis.csv
 
 
-        :param lcia_implementation_file: The full path of the input LCIA implementation XLSX file
-        :param lcia_file: The full path of the output CSV file
+        :param lcia_implementation_file: The full path of the INPUT LCIA implementation XLSX file
+        :param lcia_file: The full path of the OUTPUT CSV file
+        :param method_like: To filter rows, let pass only those where method contains "method_like"
+        :param include_obsolete: To not filter rows, where method is considered obsolete
+        :param use_nis_name_syntax: Transform names which are used as NIS identifiers to the NIS identifier syntax
         :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :return:
         """
         set_log_level_from_cli_param(log)
-        convert_lcia_implementation_to_nis(lcia_implementation_file, lcia_file)
+        convert_lcia_implementation_to_nis(lcia_implementation_file, lcia_file, method_like, include_obsolete, use_nis_name_syntax)
 
     # def lci_to_interface_types(self, lci_file_path: str, csv_file: str):
     #     """

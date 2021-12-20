@@ -2,26 +2,34 @@ from io import StringIO
 
 import openpyxl
 import pandas as pd
+from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 
 
-def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file: str):
+def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file: str, method_like, include_obsolete, use_nis_name_syntax):
     def get_horizon(ind):
         return ""
 
+    def adapt_name(name):
+        return get_nis_name(name) if use_nis_name_syntax else name
+
     workbook = openpyxl.load_workbook(lcia_implementation_file, data_only=True)
     cfs = workbook["CFs"]
-    units = workbook["units"]
+    units = workbook["units"] if "units" in workbook.sheetnames else workbook["Indicators"]
     methods = set()
     categories = set()
     indicators = {}  # And its unit
     horizons = set()
     compartments = {}  # Include subcompartments
-    for r in range(1, units.max_row):
+    if method_like != "":
+        method_like = method_like.lower()
+    for r in range(2, units.max_row):
         method = units.cell(row=r, column=1).value.strip()
-        if "superseded" in method.lower() or "obsolete" in method.lower():
-            continue
-        if "recipe" not in method.lower() or "midpoint" not in method.lower():
-            continue
+        if not include_obsolete:
+            if "superseded" in method.lower() or "obsolete" in method.lower():
+                continue
+        if method_like != "":
+            if method_like not in method.lower():
+                continue
 
         category = units.cell(row=r, column=2).value.strip()
         indicator = units.cell(row=r, column=3).value.strip()
@@ -32,13 +40,13 @@ def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file:
         indicators[indicator] = unit
 
     print("METHODS")
-    print(methods)
+    print(list(methods))
     print("INDICATORS")
-    print(indicators.keys())
+    print(list(indicators.keys()))
     print("CATEGORIES")
-    print(categories)
+    print(list(categories))
     _ = []  # Output
-    for r in range(1, cfs.max_row):
+    for r in range(2, cfs.max_row):
         method = cfs.cell(row=r, column=1).value.strip()
         if method not in methods:
             continue
@@ -51,16 +59,29 @@ def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file:
         subcompartment = cfs.cell(row=r, column=6).value.strip()
         v = cfs.cell(row=r, column=7).value
         ind_unit = indicators[indicator]
+        if not include_obsolete:
+            if "superseded" in name.lower() or "obsolete" in name.lower():
+                continue
 
-        _.append((method, indicator, ind_unit, name, "", h, v, compartment, subcompartment))
+        _.append((method,
+                  category,
+                  indicator,
+                  ind_unit,
+                  adapt_name(name),  # InterfaceType name
+                  "",  # This assumes unit from the InterfaceType definition, which may not be correct
+                  h,  # Horizon, which may be empty ("")
+                  v,
+                  compartment,
+                  subcompartment)
+                 )
 
-    df = pd.DataFrame(_, columns=["LCIAMethod", "LCIAIndicator", "LCIAIndicatorUnit",
+    df = pd.DataFrame(_, columns=["LCIAMethod", "LCIACategory", "LCIAIndicator", "LCIAIndicatorUnit",
                                   "Interface", "InterfaceUnit",
                                   "LCIAHorizon", "LCIACoefficient",
                                   "Compartment", "Subcompartment"])
 
     s = StringIO()
-    s.write("# To regenerate this file, execute action 'lcia_implementation_to_nis'\n")
+    s.write(f"# To regenerate this file, execute 'enbios lcia_implementation_to_nis {lcia_implementation_file} {lcia_file} {method_like if method_like else ''} {'--include-obsolete' if include_obsolete else ''}'\n")
     df.to_csv(s, index=False)
     with open(lcia_file, "wt") as f:
         f.write(s.getvalue())

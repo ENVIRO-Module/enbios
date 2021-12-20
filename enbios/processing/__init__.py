@@ -1,4 +1,4 @@
-from typing import Dict, Tuple, List
+from typing import Dict, Tuple, List, Optional
 
 from nexinfosys.command_generators import Issue
 from nexinfosys.embedded_nis import NIS
@@ -51,7 +51,7 @@ def read_parse_configuration(file_name) -> Dict:
     return cfg
 
 
-def read_submit_solve_nis_file(nis_file_url: str, state: State, solve=False) -> Tuple[NIS, List[Issue]]:
+def read_submit_solve_nis_file(nis_file_url: str, state: Optional[State], solve=False) -> Tuple[NIS, List[Issue]]:
     nis = NIS()
     nis.open_session(True, state)
     nis.reset_commands()
