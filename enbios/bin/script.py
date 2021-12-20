@@ -121,7 +121,8 @@ class Enbios:
 
     @staticmethod
     def enviro(cfg_file_path,
-               just_one_fragment: bool = False,
+               n_fragments: int = 0,
+               first_fragment: int = 0,
                generate_nis_base_file: bool = False,
                generate_full_fragment_files: bool = False,
                generate_interface_results: bool = False,
@@ -143,7 +144,8 @@ class Enbios:
         (you can copy and paste the example in an empty text file as reference, and ".yaml" as extension)
 
         :param cfg_file_path:
-        :param just_one_fragment: True if only one of the fragments is to be computed, to test things
+        :param n_fragments: If > 0, reduce the number of fragments to the first n_fragments
+        :param first_fragment: Index of the first fragment to be processed. To obtain an ordered list of fragments, execute first "enbios enviro" with --fragments-list-file option
         :param generate_nis_base_file: True if the Base file should be generated (once) for testing purposes
         :param generate_full_fragment_files: True if the current fragment should be dumped into a NIS formatted XLSX file
         :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment

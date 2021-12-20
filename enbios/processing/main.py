@@ -267,7 +267,8 @@ class Enviro:
             yield ':'.join([f"{k}{v}" for k, v in partial_key.items()]), partial_key, md, accountable_procs
 
     def compute_indicators_from_base_and_simulation(self,
-                                                    just_one_fragment: bool = False,
+                                                    n_fragments: int = 0,
+                                                    first_fragment: int = 0,
                                                     generate_nis_base_file: bool = False,
                                                     generate_nis_fragment_file: bool = False,
                                                     generate_interface_results: bool = False,
@@ -280,7 +281,8 @@ class Enviro:
         MAIN entry point of current ENVIRO
         Previously, a Base NIS must have been prepared, see @_prepare_base
 
-        :param just_one_fragment: True if only one of the fragments is to be computed, to test things
+        :param n_fragments: If > 0, reduce the number of fragments to the first n_fragments
+        :param first_fragment: Index of the first fragment to be processed. To obtain an ordered list of fragments, execute first "enbios enviro" with --fragments-list-file option
         :param generate_nis_base_file: True if the Base file should be generated (once) for testing purposes
         :param generate_nis_fragment_file: True if the current fragment should be dumped into a NIS formatted XLSX file
         :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
@@ -325,6 +327,12 @@ class Enviro:
         # MAIN LOOP - Split simulation in independent fragments, and process them
         fragments = sorted([_ for _ in self._read_simulation_fragments()], key=operator.itemgetter(0))
         logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
+        if n_fragments > 0 or first_fragment > 0:
+            if n_fragments == 0:
+                fragments = fragments[first_fragment:]
+            else:
+                fragments = fragments[first_fragment:first_fragment + n_fragments]
+            logging.debug(f"{n_fragments} fragment{'s' if n_fragments > 1 else ''} will be processed, starting from fragment {first_fragment}")
         if n_cpus == 1:  # Serial execution (anyway, function "parallelizable_process_fragment" is valid for both)
             for i, (frag_label, partial_key, frag_metadata, frag_processors) in enumerate(fragments):
                 # fragment_metadata: dict with regions, years, scenarios in the fragment
@@ -336,8 +344,6 @@ class Enviro:
                                                 generate_nis_fragment_file, generate_interface_results,
                                                 generate_indicators, max_lci_interfaces, keep_fragment_file)
 
-                if just_one_fragment:
-                    break
         else:  # Parallel execution
             # If 0 -> find an appropriate number of CPUs to use
             if n_cpus == 0:
@@ -934,7 +940,7 @@ if __name__ == '__main__':
                  simulation_files_path="/home/rnebot/Downloads/borrame/calliope-output/datapackage.json",
                  output_directory="/home/rnebot/Downloads/borrame/enviro-output-2/")
         t.set_cfg_file_path(_)
-        t.compute_indicators_from_base_and_simulation(just_one_fragment=True,
+        t.compute_indicators_from_base_and_simulation(n_fragments=True,
                                                       generate_nis_base_file=False,
                                                       generate_nis_fragment_file=False,
                                                       generate_interface_results=True,
