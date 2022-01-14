@@ -1,4 +1,4 @@
-nexinfosys>=0.75
+nexinfosys>=0.92
 brightway2==2.3
 # calliope==0.6.6.post1
 friendly-data>=0.2.1

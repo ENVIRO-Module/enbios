@@ -14,10 +14,10 @@ from friendly_data.converters import from_df
 from nexinfosys.bin.cli_script import get_valid_name, get_file_url, prepare_base_state, print_issues
 from nexinfosys.command_generators import IType, Issue
 
-from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue
+from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue, create_dictionary
 from nexinfosys.embedded_nis import NIS
 from nexinfosys.model_services import State
-from nexinfosys.models.musiasem_concepts import Processor, ProcessorsRelationPartOfObservation
+from nexinfosys.models.musiasem_concepts import Processor, ProcessorsRelationPartOfObservation, Indicator
 from nexinfosys.serialization import deserialize_state
 
 from enbios.common.helper import generate_workbook, list_to_dataframe, get_scenario_name
@@ -101,6 +101,9 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
                 else:
                     with open(csv_name, "wt") as f:
                         f.write("Could not obtain indicator values (??)")
+
+        if df_iamc_indicators is not None:
+            append_fragment_to_file("iamc_indicators.csv", df_iamc_indicators)
 
         # Write NIS of the fragment just processed
         if generate_nis_fragment_file and nis_idempotent_file is not None:
@@ -714,6 +717,32 @@ def process_fragment(base_serial_state: bytes,
                     # InvokingInterface, RequestedInterface, Scale are mandatory; specify something here
                     cloners_list.append((reg, p_name, "Clone", "", "", ""))
 
+    def _get_processor_name(p):
+        return f"{p.attrs['technology']}_{p.attrs['carrier']}"
+
+    def _split_processor_name(p, carriers, techs):
+        """
+        Split a processor name into technology and carrier, in accordance with "_get_processor_name"
+
+        :param p:
+        :param carriers:
+        :param techs:
+        :return:
+        """
+        # Metadata contains technologies and carriers, which are code lists
+        r_ = p.split(".")
+        if r_[-1].endswith(tuple(carriers)) and r_[-1].startswith(tuple(techs)):
+            # Find carrier and split
+            # (carriers must be sorted by length, to avoid cases like this. If the carrier is "syn_diesel" and
+            #  we have ["diesel", "syn_diesel"], it will fail. But if "carriers" is sorted by length, it will
+            #  split "r_" properly)
+            for c in carriers:
+                if r_[-1].endswith(c):
+                    nc = len(c)
+                    return f"{'.'.join(r_[:-1])}.{r_[-1][:-nc-1]}", r_[-1][-nc:]
+        else:
+            return p, ""
+
     def _add_processor(proc, matches, processors_list, already_added_processors_set, techs_used_in_regions):
         """
         Inserts elements in "processors_list", directly usable as worksheet rows in a BareProcessors command
@@ -729,8 +758,8 @@ def process_fragment(base_serial_state: bytes,
         return_simple = True
         # Add "Accounted Structural" Processors, hanging from each parent
         for parent_p in matches:
-            # NEW PROCESSOR NAME: technology + carrier + region
-            p_name = f"{proc.attrs['technology']}_{proc.attrs['carrier']}"
+            # NEW PROCESSOR NAME: technology + carrier [+ region]
+            p_name = _get_processor_name(proc)
             if p_name in techs_used_in_regions:
                 return_simple = False
             else:
@@ -815,6 +844,90 @@ def process_fragment(base_serial_state: bytes,
                     interfaces.append([proc_name, i.name, "", "", "", orientation, "", "", "", "", v,
                                        "", relative_to, "", "", "", "", "Year", "Ecoinvent", "", ""])
 
+    def _prepare_iamc_dataframe_fragment(state: State, indicators: pd.DataFrame, iamc_codes: Dict[str, str], metadata):
+        # self._simulation_files_path
+        # TODO Write the indicators using Sentinel-friendly-data-IAMC format
+        #  from friendly_data.io import dwim_file (Do What I Mean)
+        #  from friendly_data.iamc import IAMconv
+        #  from friendly_data.dpkg import pkgindex
+        #  conf = dwim_file("conf.yaml")
+        #  conf["indices"]
+        #  idx = pkgindex.from_file("index.yaml")
+        #  converter = IAMconv(idx, conf["indices"], basepath="<location>")
+        #  conf2 = conf["indices"]
+        #  conf2["year"] = 2050
+        #  converter2 = IAMconv(idx, conf2, basepath="")
+        #  converter.to_csv o to_df
+        #  .
+        #  Also, e-mail from Suvayu
+        # try:
+        #     res = from_df(df_indicators, output_dir, os.path.join(output_dir, f"indicators_fd.csv"))
+        # except:
+        #     traceback.print_exc()
+        iamc_df = indicators.copy(True)
+        # Scope
+        iamc_df = iamc_df[iamc_df["Scope"] == "Internal"]
+        iamc_df = iamc_df.drop(columns=["Scope"])
+        # Model
+        iamc_df["Model"] = "enbios[calliope]"
+        # Scenario, Region, Value, Unit, Year
+        iamc_df.rename(columns=dict(System="Region", Scenario="Scenario", Value="Value", Unit="Unit", Period="Year"),
+                       inplace=True)
+
+        def _get_iamc_code(row, prd, iamc_codes, carriers, techs):
+            processor, indicator = row["Processor"], row["Indicator"]
+            # First part of the code, from the processor
+            if processor in iamc_codes:
+                first_part = iamc_codes[processor]
+            else:
+                parts = _split_processor_name(processor, carriers, techs)
+                p = prd.get(Processor.partial_key(parts[0]))
+                if p and len(p) == 1:
+                    first_part = p[0].attributes.get("iamccode", "")
+                else:
+                    first_part = ""
+            # Second part of the code, from the indicator
+            ind = prd.get(Indicator.partial_key(indicator))
+            if ind and len(ind) == 1:
+                # TODO It could also be that if "IAMCCodeSuffix" was not specified, the second part is left empty,
+                #   so the row is skipped
+                second_part = ind[0].attributes.get("iamccodesuffix", indicator)
+            else:
+                second_part = indicator
+            # Combine both parts and return
+            if first_part and second_part:
+                return f"{first_part}|{second_part}"
+            else:
+                return ""
+
+        def _get_indicator_unit(row, prd):
+            indicator = row["Indicator"]
+            ind = prd.get(Indicator.partial_key(indicator))
+            if ind and len(ind) == 1:
+                return ind[0]._unit_label if ind[0]._unit_label else ind[0]._unit
+            else:
+                return ""
+
+        specially_sorted_carriers = sorted(metadata["carriers"], key=len, reverse=True)
+        iamc_df["Variable"] = iamc_df.apply(
+            functools.partial(_get_iamc_code,
+                              prd=state.get("_glb_idx"),
+                              iamc_codes=iamc_codes_techs,
+                              carriers=specially_sorted_carriers,
+                              techs=metadata["techs"]),
+            axis=1)
+        iamc_df["Unit"] = iamc_df.apply(
+            functools.partial(_get_indicator_unit,
+                              prd=state.get("_glb_idx")),
+            axis=1)
+
+        iamc_df = iamc_df[iamc_df["Variable"] != ""]
+
+        # Rearrange columns
+        iamc_df = iamc_df[["Model", "Scenario", "Region", "Variable", "Unit", "Value", "Year", "Processor"]]
+
+        return iamc_df
+
     # MAIN - Integration, NIS file for the fragment, and NIS submission (Indicators) -----------------------------------
     print(f"Processing fragment {fragment_metadata}")
 
@@ -854,6 +967,7 @@ def process_fragment(base_serial_state: bytes,
                 p.processor_system = r
 
     # FOR EACH SIMULATION PROCESSOR (of the fragment)
+    iamc_codes_techs = create_dictionary()
     for p in fragment_processors:
         # Update time and scenario
         # (they can change from entry to entry, but for MuSIASEM the same functional Processor is used)
@@ -876,11 +990,13 @@ def process_fragment(base_serial_state: bytes,
             print(f"Could not find a tech processor matching {p.attrs}. Skipping")
             continue
 
-        # Find "MUSIASEM Dendrogram" matching Processor(s)
+        # Parent processor(s) in "MUSIASEM Dendrogram"
         musiasem_matches = _find_parents(prd, structural_not_accounted_procs, matching_tech)
         if musiasem_matches is None or len(musiasem_matches) == 0:
             print(f"{p} has no parents. Cannot account it, skipped.")
             continue
+
+        iamc_codes_techs[tech] = matching_tech.attributes.get("iamccode", matching_tech.full_hierarchy_name.replace(".", "|"))
 
         # Add PROCESSOR(S)
         name, parent = _add_processor(p, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
