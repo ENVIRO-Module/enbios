@@ -64,50 +64,34 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
     :return:
     """
 
-    def write_outputs(nis_idempotent_file, df_indicators, df_interfaces):
+    def write_outputs(outputs):
         """
         Write results of a submission to output directory
 
-        :param nis_idempotent_file:
-        :param df_indicators:
-        :param df_interfaces:
+        :param outputs: Dictionary with the possible outputs
         :return:
         """
+        nis_idempotent_file = outputs.get("idempotent_nis", None)
+        df_indicators = outputs.get("indicators", pd.DataFrame())
+        df_interfaces = outputs.get("interfaces", pd.DataFrame())
+        df_iamc_indicators = outputs.get("iamc_indicators", pd.DataFrame())
         print("Writing results ...")
 
-
-        # self._simulation_files_path
-        # TODO Write the indicators using Sentinel-friendly-data-IAMC format
-        #  from friendly_data.io import dwim_file (Do What I Mean)
-        #  from friendly_data.iamc import IAMconv
-        #  from friendly_data.dpkg import pkgindex
-        #  conf = dwim_file("conf.yaml")
-        #  conf["indices"]
-        #  idx = pkgindex.from_file("index.yaml")
-        #  converter = IAMconv(idx, conf["indices"], basepath="<location>")
-        #  conf2 = conf["indices"]
-        #  conf2["year"] = 2050
-        #  converter2 = IAMconv(idx, conf2, basepath="")
-        #  converter.to_csv o to_df
-        #  .
-        #  Also, e-mail from Suvayu
-        # try:
-        #     res = from_df(df_indicators, output_dir, os.path.join(output_dir, f"indicators_fd.csv"))
-        # except:
-        #     traceback.print_exc()
-        # Main result: "indicators.csv" file (aggregates all fragments)
-
-        if df_indicators is not None:
+        def append_fragment_to_file(file_name, df):
             lock = NamedAtomicLock("enbios-lock")
             lock.acquire()
             try:
-                indicators_csv_file = os.path.join(output_dir, f"indicators.csv")
-                if not os.path.isfile(indicators_csv_file):
-                    df_indicators.to_csv(indicators_csv_file, index=False)
+                full_file_name = os.path.join(output_dir, file_name)
+                if not os.path.isfile(full_file_name):
+                    df.to_csv(full_file_name, index=False)
                 else:
-                    df_indicators.to_csv(indicators_csv_file, index=False, mode='a', header=False)
+                    df.to_csv(full_file_name, index=False, mode='a', header=False)
             finally:
                 lock.release()
+
+        # Main result: "indicators.csv" file (aggregates all fragments)
+        if df_indicators is not None:
+            append_fragment_to_file("indicators.csv", df_indicators)
 
             # Write a separate indicators.csv for the fragment
             if generate_indicators:
@@ -139,18 +123,18 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
     start = time.time()  # Time execution
 
     # Call main function
-    nis_idempotent_file, df_indicators, df_interfaces = process_fragment(s_state, p_key,
-                                                                         f_metadata, f_processors,
-                                                                         output_dir,
-                                                                         development_nis_file,
-                                                                         max_lci_interfaces,
-                                                                         keep_fragment_file,
-                                                                         generate_nis_fragment_file,
-                                                                         generate_interface_results)
+    outputs = process_fragment(s_state, p_key,
+                               f_metadata, f_processors,
+                               output_dir,
+                               development_nis_file,
+                               max_lci_interfaces,
+                               keep_fragment_file,
+                               generate_nis_fragment_file,
+                               generate_interface_results)
 
     end = time.time()  # Stop timing
     print(f"Fragment processed in {end - start} seconds ---------------------------------------")
-    write_outputs(nis_idempotent_file, df_indicators, df_interfaces)
+    write_outputs(outputs)
     start = time.time()  # Time also output writing
     print(f"Fragment outputs written in {start-end} seconds to output dir: {output_dir}")
 
@@ -350,10 +334,11 @@ class Enviro:
             with open(os.path.join(output_dir, "nis_base.idempotent.xlsx"), "wb") as f:
                 f.write(nis_file)
 
-        # Remove "indicators.csv" if it exists
-        indicators_csv_file = os.path.join(output_dir, f"indicators.csv")
-        if os.path.isfile(indicators_csv_file):
-            os.remove(indicators_csv_file)
+        # Remove "indicators.csv" and "iamc_indicators if they exist
+        for f_name in ["indicators.csv", "iamc_indicators.csv"]:
+            f_path = os.path.join(output_dir, f_name)
+            if os.path.isfile(f_path):
+                os.remove(f_path)
 
         # MAIN LOOP - Split simulation in independent fragments, and process them
         default_time = self._cfg.get("simulation_default_time")
@@ -911,6 +896,7 @@ def process_fragment(base_serial_state: bytes,
                                                 variables, fragment_metadata["scenarios"])
 
     # SUBMIT NIS file: account and calculate indicators, if a NIS file was generated
+    outputs = {}
     if nis_file_name:
         print(f'frag_file = "{nis_file_name}"')
         try:
@@ -923,29 +909,22 @@ def process_fragment(base_serial_state: bytes,
 
             issues, new_state, ds = run_nis_for_results(nis_file_name, development_nis_file, state, _)
             if ds:
-                df_indicators = ds[0]
+                outputs["indicators"] = ds[0]
+                outputs["iamc_indicators"] = _prepare_iamc_dataframe_fragment(state, ds[0], iamc_codes_techs, fragment_metadata)
+                print(f"File processing done, shape of 'Indicators' dataset: {ds[0].shape}, "
+                      f"shape of IAMC dataset: {outputs['iamc_indicators'].shape}")
                 if generate_interface_results:
-                    df_interfaces = ds[1]
-                else:
-                    df_interfaces = None
+                    outputs["interfaces"] = ds[1]
                 if generate_nis_fragment_file:
-                    nis_idempotent = ds[2] if len(ds) == 3 else ds[1]
-                else:
-                    nis_idempotent = None
-                print(f"File processing done, shape of 'Indicators' dataset: {df_indicators.shape}")
+                    outputs["idempotent_nis"] = ds[2] if len(ds) == 3 else ds[1]
             else:
-                nis_idempotent, df_indicators, df_interfaces = pd.DataFrame(), pd.DataFrame(), pd.DataFrame()
                 print(f"There were issues processing fragment file: {nis_file_name}")
                 print_issues("Solving fragment", nis_file_name, issues, f"Please check the issues resulting from solving fragment '{nis_file_name}'")
 
         finally:
             if not keep_fragment_file:
                 os.remove(nis_file_name)
-        # Return results
-        return nis_idempotent, df_indicators, df_interfaces
-    else:
-        # Return Empty
-        return None, pd.DataFrame(), pd.DataFrame()
+    return outputs
 
 
 if __name__ == '__main__':
