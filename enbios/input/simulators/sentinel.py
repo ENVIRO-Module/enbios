@@ -64,7 +64,10 @@ class SentinelSimulation(Simulation):
                 if not isinstance(idx, tuple):  # When it is not a MultiIndex, Pandas has "idx" to not be a Tuple; workaround: convert into a Tuple of a single element
                     idx = (idx,)
                 region = get_nis_name(idx[region_idx]) if region_idx >= 0 else None
-                carrier = get_nis_name(idx[carrier_idx]) if carrier_idx >= 0 else None
+                if carrier_idx >= 0 and isinstance(idx[carrier_idx], str):
+                    carrier = get_nis_name(idx[carrier_idx])
+                else:
+                    carrier = None
                 tech = get_nis_name(idx[tech_idx]) if tech_idx >= 0 else None
                 scenario = get_nis_name(idx[scenario_idx]) if scenario_idx >= 0 else None
                 time_ = str(idx[time_idx]) if time_idx >= 0 else default_time
@@ -87,6 +90,8 @@ class SentinelSimulation(Simulation):
                     region = scenario = time_ = "-"
                 # -- Add COLS information --
                 k = SimStructuralProcessorAttributes.partial_key(tech, region, carrier, scenario, time_)
+                if carrier_idx >= 0 and not carrier:
+                    continue
                 if tech is None or not region or region == "-":
                     # print(f"WARNING: Missing Tech and/or Region: {k}. Skipped")
                     continue
