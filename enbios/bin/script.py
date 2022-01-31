@@ -140,34 +140,47 @@ class Enbios:
     #     lci_to_interfaces_csv(lci_file_path, csv_file)
 
     @staticmethod
-    def lci_to_nis(spold_files_folder: str, correspondence_path: str,
-                   nis_base_url: str, nis_structurals_base_path: str, log: str = None):
+    def lci_to_nis(nis_base_url: str,
+                   spold_files_folder: str,
+                   nis_structurals_output: str, log: str = None):
         """
-        Scan correspondence file AND a NIS file to extract a NIS file with the commands:
-           - InterfaceTypes
-           - BareProcessors
-           - Interfaces
-        The correspondence file should be a CSV file with the following header:
-           name,match_target_type,match_target,weight,match_conditions
-        Example:
-           enbios lci_to_nis /home/rnebot/GoogleDrive/AA_SENTINEL/enviro_tmp/ /home/rnebot/GoogleDrive/AA_SENTINEL/enviro/sim_correspondence_example.csv https://docs.google.com/spreadsheets/d/15NNoP8VjC2jlhktT0A8Y0ljqOoTzgar8l42E5-IRD90/edit?usp=sharing /home/rnebot/Downloads/out.xlsx
-           enbios lci_to_nis /home/rnebot/GoogleDrive/AA_SENTINEL/enviro_tmp/ "" https://docs.google.com/spreadsheets/d/1nYzphq1XYrezquW3yj7UiJ8sNJ8RzJ8gqErg3oVmw2Q/edit?usp=sharing /home/rnebot/Downloads/lci_to_nis_output.xlsx
-
-        Example lines in this file:
-           wind_onshore_competing,lca,2fdb6da1-8281-453d-8a7c-0184dc3586c4_66c93e71-f32b-4591-901c-55395db5c132.spold,,
-           wind_onshore_competing,musiasem,Energy_system.Electricity_supply.Electricity_generation.Electricity_renewables.Electricity_wind.Electricity_wind_onshore,,
-
+        Scan "NIS base file" for references to Spold files (that should be available in "Spold files folder"), and
+        elaborate another NIS file at "NIS structurals output", with equivalent MuSIASEM structural Processors.
+        "enbios enviro" needs the information to be incorporated into the NIS base file, so the NIS Base file should be
+        modified to import the elaborated NIS file, using an ImportCommands command.
 
         :param spold_files_folder: Local folder where .spold files are stored
-        :param correspondence_path: Correspondence file
         :param nis_base_url: URL of a NIS file that will be used as Base for the assembly of the model
-        :param nis_structurals_base_path: File name of the output NIS that will contain the structural processors
+        :param nis_structurals_output: File name of the output NIS that will contain the structural processors
         :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :return:
         """
+        # The resulting NIS file has these commands:
+        #    - InterfaceTypes
+        #    - BareProcessors
+        #    - Interfaces
+
         set_log_level_from_cli_param(log)
         s2n = SpoldToNIS()
-        s2n.spold2nis("generic_energy_production", spold_files_folder, correspondence_path, nis_base_url, nis_structurals_base_path)
+
+
+        # TODO CORRESPONDENCE_PATH not USED (NIS base file contains all the information)
+        #  The correspondence file should be a CSV file with the following header:
+        #     name,match_target_type,match_target,weight,match_conditions
+        #  Example:
+        #     enbios lci_to_nis /home/rnebot/GoogleDrive/AA_SENTINEL/enviro_tmp/ /home/rnebot/GoogleDrive/AA_SENTINEL/enviro/sim_correspondence_example.csv https://docs.google.com/spreadsheets/d/15NNoP8VjC2jlhktT0A8Y0ljqOoTzgar8l42E5-IRD90/edit?usp=sharing /home/rnebot/Downloads/out.xlsx
+        #     enbios lci_to_nis /home/rnebot/GoogleDrive/AA_SENTINEL/enviro_tmp/ "" https://docs.google.com/spreadsheets/d/1nYzphq1XYrezquW3yj7UiJ8sNJ8RzJ8gqErg3oVmw2Q/edit?usp=sharing /home/rnebot/Downloads/lci_to_nis_output.xlsx
+        #
+        #  Example lines in this file:
+        #     wind_onshore_competing,lca,2fdb6da1-8281-453d-8a7c-0184dc3586c4_66c93e71-f32b-4591-901c-55395db5c132.spold,,
+        #     wind_onshore_competing,musiasem,Energy_system.Electricity_supply.Electricity_generation.Electricity_renewables.Electricity_wind.Electricity_wind_onshore,,
+
+        correspondence_path = ""
+        s2n.spold2nis("generic_energy_production",
+                      spold_files_folder,
+                      correspondence_path,
+                      nis_base_url,
+                      nis_structurals_output)
 
     @staticmethod
     def sentinel_to_nis_preparatory(sentinel_data_package_json_path: str, nis_file: str, log: str = None):
