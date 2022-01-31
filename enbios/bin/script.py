@@ -5,6 +5,8 @@ import fire
 import webbrowser
 
 from nexinfosys.bin.cli_script import set_log_level_from_cli_param, prepare_base_state, print_issues
+from nexinfosys.common.helper import PartialRetrievalDictionary
+
 from enbios.common.helper import list_to_dataframe, generate_workbook
 from enbios.input.data_preparation.lci_to_nis import SpoldToNIS
 from enbios.input.data_preparation.lcia_implementation_to_nis import convert_lcia_implementation_to_nis
@@ -36,8 +38,15 @@ def list_lcia_indicators(nis_file, output_file):
 
         :return:
         """
-        lcia_methods = state.get("_lcia_methods")
-        if lcia_methods:
+        lcia_methods_dict = state.get("_lcia_methods")
+        if lcia_methods_dict:
+            lcia_methods = PartialRetrievalDictionary()
+            from random import random
+            for k, v in lcia_methods_dict.items():
+                _ = dict(m=k[0], t=k[1], d=k[2], h=k[3], i=k[4], c=k[5], s=k[6])
+                # NOTE: a random() is generated just to grant that the tuple is unique
+                lcia_methods.put(_, (v[0], v[1], v[2], random()))
+
             keys = lcia_methods.get(dict(m=None, d=None, h=None, c=None, s=None, t=None), just_key=True)
             # Convert to set of tuples, keeping only the desired elements of dictionaries in each tuple, then sort
             different = sorted(set([(key["m"], key["d"], key["h"], key["c"], key["s"], key["t"]) for key in keys]),
