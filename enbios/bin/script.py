@@ -221,18 +221,19 @@ class Enbios:
 
     @staticmethod
     def enviro(cfg_file_path,
-               n_fragments: int = 0,
+               just_prepare_base: bool = False,
+               fragments_list_file: bool = False,
                first_fragment: int = 0,
+               n_fragments: int = 0,
+               max_lci_interfaces: int = 0,
+               keep_min_fragment_files: bool = True,
                generate_nis_base_file: bool = False,
                generate_full_fragment_files: bool = False,
                generate_interface_results: bool = False,
                generate_indicators: bool = False,
-               fragments_list_file: bool = False,
-               keep_min_fragment_files: bool = True,
-               max_lci_interfaces: int = 0,
                n_cpus: int = 1,
                log: str = None,
-               just_prepare_base: bool = False):
+               ):
         """
         The main function of the package, reads the contents of the configuration file, which can be either a JSON or YAML
         file. Following an example of YAML file contents:
@@ -244,19 +245,19 @@ class Enbios:
 
         (you can copy and paste the example in an empty text file as reference, and ".yaml" as extension)
 
-        :param cfg_file_path:
-        :param n_fragments: If > 0, reduce the number of fragments to the first n_fragments
-        :param first_fragment: Index of the first fragment to be processed. To obtain an ordered list of fragments, execute first "enbios enviro" with --fragments-list-file option
+        :param cfg_file_path: Path of the configuration file in YAML format
+        :param n_fragments: number of fragments to process, 0 for "all"
+        :param first_fragment: Index of the first fragment to be processed. To obtain an ordered list of fragments, execute first "enbios enviro" with "--just-prepare-base --fragments-list-file" options
         :param generate_nis_base_file: True if the Base file should be generated (once) for testing purposes
-        :param generate_full_fragment_files: True if the current fragment should be dumped into a NIS formatted XLSX file
-        :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
-        :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
-        :param fragments_list_file: True to generate a file informing of the fragments that can be computed
+        :param generate_full_fragment_files: True to generate a full NIS formatted XLSX file for each fragment
+        :param generate_interface_results: True to generate a CSV with values at interfaces for each fragment
+        :param generate_indicators: True to generate a CSV with indicators for each fragment
+        :param fragments_list_file: True to generate a CSV with the list of fragments
         :param keep_min_fragment_files: If True, do not delete minimal NIS files submitted to NIS to compute indicators
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
-        :param n_cpus: Number of CPUs of the local computer used to perform the process (default 1, sequential)
+        :param n_cpus: Number of CPUs of the local computer used to perform the process (default 1, sequential; 0 to find a good value for the computer automatically)
         :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
-        :param just_prepare_base: True to only preparing Base file and exit
+        :param just_prepare_base: True to only prepare (download, parse and execute, then cache; but not solve) Base file and exit
         :return:
         """
         # locale.setlocale(locale.LC_ALL, 'en_US')

@@ -73,6 +73,7 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
         """
         nis_idempotent_file = outputs.get("idempotent_nis", None)
         df_indicators = outputs.get("indicators", pd.DataFrame())
+        df_global_indicators = outputs.get("global_indicators", pd.DataFrame())
         df_interfaces = outputs.get("interfaces", pd.DataFrame())
         df_iamc_indicators = outputs.get("iamc_indicators", pd.DataFrame())
         print("Writing results ...")
@@ -101,6 +102,10 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
                 else:
                     with open(csv_name, "wt") as f:
                         f.write("Could not obtain indicator values (??)")
+
+        # "system_global_indicators.csv" file (aggregates all fragments)
+        if df_global_indicators is not None:
+            append_fragment_to_file("system_global_indicators.csv", df_global_indicators)
 
         if df_iamc_indicators is not None:
             append_fragment_to_file("iamc_indicators.csv", df_iamc_indicators)
@@ -291,16 +296,16 @@ class Enviro:
         MAIN entry point of current ENVIRO
         Previously, a Base NIS must have been prepared, see @_prepare_base
 
-        :param n_fragments: If > 0, reduce the number of fragments to the first n_fragments
+        :param n_fragments: number of fragments to process, 0 for "all"
         :param first_fragment: Index of the first fragment to be processed. To obtain an ordered list of fragments, execute first "enbios enviro" with --fragments-list-file option
         :param generate_nis_base_file: True if the Base file should be generated (once) for testing purposes
-        :param generate_nis_fragment_file: True if the current fragment should be dumped into a NIS formatted XLSX file
-        :param generate_interface_results: True if a CSV with values at interfaces should be produced, for each fragment
-        :param generate_indicators: True if a CSV with indicators should be produced, for each fragment
-        :param fragments_list_file: True if a CSV with the list of fragments should be produced
+        :param generate_nis_fragment_file: True to generate a full NIS formatted XLSX file for each fragment
+        :param generate_interface_results: True to generate a CSV with values at interfaces for each fragment
+        :param generate_indicators: True to generate a CSV with indicators for each fragment
+        :param fragments_list_file: True to generate a CSV with the list of fragments
         :param max_lci_interfaces: Max number of LCI interfaces to consider. 0 for all (default 0)
         :param n_cpus: Number of CPUs of the local computer used to perform the process
-        :param just_prepare_base: True to only preparing Base file and exit
+        :param just_prepare_base: True to only prepare (download, parse and execute, then cache; but not solve) Base file and exit
         :param keep_fragment_file: If True, do not remove the minimal NIS file generated and submitted to NIS
         :return:
         """
@@ -321,7 +326,7 @@ class Enviro:
                          f"Base not ready due to errors, exiting. Please check the issues")
             sys.exit(1)
 
-        if just_prepare_base:
+        if just_prepare_base and not fragments_list_file:
             print("Base processed and cached, exiting because 'just_prepare_base == True'")
             sys.exit(1)
 
@@ -337,16 +342,12 @@ class Enviro:
             with open(os.path.join(output_dir, "nis_base.idempotent.xlsx"), "wb") as f:
                 f.write(nis_file)
 
-        # Remove "indicators.csv" and "iamc_indicators if they exist
-        for f_name in ["indicators.csv", "iamc_indicators.csv"]:
-            f_path = os.path.join(output_dir, f_name)
-            if os.path.isfile(f_path):
-                os.remove(f_path)
-
-        # MAIN LOOP - Split simulation in independent fragments, and process them
+        # Read simulation AND Split it in decoupled fragments
         default_time = self._cfg.get("simulation_default_time")
         fragments = sorted([_ for _ in self._read_simulation_fragments(default_time=default_time)],
                            key=operator.itemgetter(0))
+
+        # Produce file with an enumeration of fragments
         if fragments_list_file:
             possible_columns = dict(_g="Regions", _d="Periods", _s="Scenarios")
             used_columns = []
@@ -363,13 +364,31 @@ class Enviro:
                 f.write("\n".join(s))
 
         logging.debug(f"Simulation read, and split in {len(fragments)} fragments")
+
+        if just_prepare_base:
+            print("Base processed and cached, exiting because 'just_prepare_base == True'")
+            sys.exit(1)
+
+        # Remove "indicators.csv" and "iamc_indicators if they exist
+        for f_name in ["indicators.csv", "iamc_indicators.csv"]:
+            f_path = os.path.join(output_dir, f_name)
+            if os.path.isfile(f_path):
+                os.remove(f_path)
+
+        # Possibly reduce the list of fragments to process
         if n_fragments > 0 or first_fragment > 0:
             if n_fragments == 0:
                 fragments = fragments[first_fragment:]
             else:
                 fragments = fragments[first_fragment:first_fragment + n_fragments]
             logging.debug(f"{n_fragments} fragment{'s' if n_fragments > 1 else ''} will be processed, starting from fragment {first_fragment}")
-        if n_cpus == 1:  # Serial execution (anyway, function "parallelizable_process_fragment" is valid for both)
+
+        # PROCESS FRAGMENTS - Sequential or embarrassingly parallel
+        # If 0 -> find an appropriate number of CPUs to use. int(80% of # CPUs) if more than 4; 2 for 4; 1 for < 4
+        if n_cpus == 0:
+            n_cpus = int(0.8*cpu_count()) if cpu_count() > 4 else 2 if cpu_count() == 4 else 1
+
+        if n_cpus == 1:
             for i, (frag_label, partial_key, frag_metadata, frag_processors) in enumerate(fragments):
                 # fragment_metadata: dict with regions, years, scenarios in the fragment
                 # fragment_processors: list of processors with their attributes which will be interfaces
@@ -380,11 +399,7 @@ class Enviro:
                                                 generate_nis_fragment_file, generate_interface_results,
                                                 generate_indicators, max_lci_interfaces, keep_fragment_file)
 
-        else:  # Parallel execution
-            # If 0 -> find an appropriate number of CPUs to use
-            if n_cpus == 0:
-                n_cpus = int(0.8*cpu_count()) if cpu_count() > 4 else 2
-
+        else:
             p = Pool(n_cpus)
             p.map(functools.partial(parallelizable_process_fragment,
                                     s_state=serial_state,
@@ -1022,6 +1037,7 @@ def process_fragment(base_serial_state: bytes,
                 _.append("flow_graph_solution")
             if generate_nis_fragment_file:
                 _.append("model")
+            _.append("flow_graph_global_indicators")
 
             issues, new_state, ds = run_nis_for_results(nis_file_name, development_nis_file, state, _)
             if ds:
@@ -1033,6 +1049,7 @@ def process_fragment(base_serial_state: bytes,
                     outputs["interfaces"] = ds[1]
                 if generate_nis_fragment_file:
                     outputs["idempotent_nis"] = ds[2] if len(ds) == 3 else ds[1]
+                outputs["global_indicators"] = ds[-1]
             else:
                 print(f"There were issues processing fragment file: {nis_file_name}")
                 print_issues("Solving fragment", nis_file_name, issues, f"Please check the issues resulting from solving fragment '{nis_file_name}'")
