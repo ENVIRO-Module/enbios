@@ -6,7 +6,7 @@ obtain either a MuSIASEM or LCA structure
 """
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
-from enbios.common.helper import list_to_dataframe, get_scenario_name
+from enbios.common.helper import list_to_dataframe, get_scenario_name, isfloat
 from enbios.input import Simulation
 from enbios.model import SimStructuralProcessorAttributes
 from friendly_data.dpkg import read_pkg
@@ -54,7 +54,9 @@ class SentinelSimulation(Simulation):
             region_idx = df.index.names.index("region") if "region" in df.index.names else -1
             carrier_name = "carrier" if "carrier" in df.index.names else "carriers" if "carriers" in df.index.names else None
             carrier_idx = df.index.names.index(carrier_name) if carrier_name is not None else -1
-            tech_idx = df.index.names.index("technology") if "technology" in df.index.names else -1
+            tech_name = "technology" if "technology" in df.index.names else "sector" if "sector" in df.index.names else None
+            tech_idx = df.index.names.index(tech_name) if tech_name in df.index.names else -1
+            subsector_idx = df.index.names.index("subsector") if "subsector" in df.index.names else -1
             scenario_name = "scenario" if "scenario" in df.index.names else "storyline" if "storyline" in df.index.names else None
             scenario_idx = df.index.names.index(scenario_name) if scenario_name is not None else -1
             time_name = "time" if "time" in df.index.names else "year" if "year" in df.index.names else None
@@ -104,7 +106,20 @@ class SentinelSimulation(Simulation):
                     pa = o[0]
                 else:
                     raise Exception(f"Found {len(o)} occurrences of SimStructuralProcessorAttributes: {k}")
-                pa.attrs.update({k: cols[k] for k in df.columns})  # Add variables from current pd.DataFrame
+                # Variables from current pd.DataFrame
+                _ = pa.attrs
+                for col in df.columns:
+                    v = cols[col]
+                    if isfloat(v):
+                        v = float(v)
+                    if col not in _:
+                        _[col] = v
+                    else:
+                        if isinstance(v, float):
+                            _[col] += v  # SUM
+                        else:
+                            _[col] = v  # Overwrite
+                # pa.attrs.update({k: cols[k] for k in df.columns})
         return prd, scenarios, regions, times, techs, carriers, units, col_types, ctc
 
     def generate_template_data(self):

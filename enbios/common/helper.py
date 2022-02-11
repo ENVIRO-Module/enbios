@@ -116,3 +116,11 @@ def set_zip_timestamp(in_zip: Union[os.PathLike, str, BinaryIO], timestamp=(2020
                 zinfo_new.date_time = timestamp
                 zout.writestr(zinfo_new, data)
     return out_zip
+
+
+def isfloat(num):
+    try:
+        float(num)
+        return True
+    except ValueError:
+        return False
