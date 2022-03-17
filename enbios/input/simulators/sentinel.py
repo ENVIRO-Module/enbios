@@ -8,7 +8,7 @@ from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
 from enbios.common.helper import list_to_dataframe, get_scenario_name, isfloat
 from enbios.input import Simulation
-from enbios.model import SimStructuralProcessorAttributes
+from enbios.model import SimStructuralProcessorAttributes, g_default_subtech
 from friendly_data.dpkg import read_pkg
 from friendly_data.converters import to_df
 
@@ -33,6 +33,44 @@ class SentinelSimulation(Simulation):
         :param default_time: Default time to use if none specified in the inputs
         :return: A tuple with assorted elements, from lists of possible values for dimensions to a registry of Processors
         """
+
+        def create_register_processor_and_attributes(prd,
+                                                     tech, region, carrier, scenario, time_, subtech, subscenario,
+                                                     attrs):
+            # tech, region, carrier, scenario, time_, subtech, subscenario -> for col in df.columns
+            k = SimStructuralProcessorAttributes.partial_key(tech, region, carrier, scenario, time_,
+                                                             subtech, subscenario)
+            if carrier_idx >= 0 and not carrier:
+                return None
+            if tech is None or not region or region == "-":
+                # print(f"WARNING: Missing Tech and/or Region: {k}. Skipped")
+                return None
+            # (tech, region, scenario, time) - (cols)
+            o = prd.get(k)
+            if len(o) == 0:
+                pa = SimStructuralProcessorAttributes(tech, region, carrier, scenario, time_, subtech, subscenario)
+                prd.put(k, pa)
+            elif len(o) == 1:
+                pa = o[0]
+            else:
+                raise Exception(f"Found {len(o)} occurrences of SimStructuralProcessorAttributes: {k}")
+            # Variables from current pd.DataFrame
+            _ = pa.attrs
+            for key, v in attrs.items():
+                if isfloat(v):
+                    v = float(v)
+                if key not in _:
+                    _[key] = v
+                else:
+                    if isinstance(v, float):
+                        tmp = _[key]
+                        _[key] += v  # SUM
+                        if v != 0 and tmp == _[key]:
+                            raise Exception(f"ERROR: did not change. value: {v}, previous: {tmp}")
+                    else:
+                        _[key] = v  # Overwrite
+            return pa
+
         if filter_model is None:  # Mandatory
             return
 
@@ -56,10 +94,19 @@ class SentinelSimulation(Simulation):
             carrier_idx = df.index.names.index(carrier_name) if carrier_name is not None else -1
             tech_name = "technology" if "technology" in df.index.names else "sector" if "sector" in df.index.names else None
             tech_idx = df.index.names.index(tech_name) if tech_name in df.index.names else -1
-            subsector_idx = df.index.names.index("subsector") if "subsector" in df.index.names else -1
+            subtech_name = "subtechnology" if "subtechnology" in df.index.names else "subsector" if "subsector" in df.index.names else None
+            subtech_idx = df.index.names.index(subtech_name) if subtech_name in df.index.names else -1
             scenario_name = "scenario" if "scenario" in df.index.names else "storyline" if "storyline" in df.index.names else None
             scenario_idx = df.index.names.index(scenario_name) if scenario_name is not None else -1
+            subscenario_name = "subscenario" if "subscenario" in df.index.names else "spore" if "spore" in df.index.names else None
+            subscenario_idx = df.index.names.index(subscenario_name) if subscenario_name is not None else -1
             time_name = "time" if "time" in df.index.names else "year" if "year" in df.index.names else None
+            # TODO Ignore variable. Not prepared for "timesteps", monthly values
+            if time_name is None and "timesteps" in df.index.names:
+                continue
+            # TODO Ignore variable. Not prepared for "subsubsectors" (service_demand.csv)
+            if "subsubsector" in df.index.names:
+                continue
             time_idx = df.index.names.index(time_name) if time_name is not None else -1
             unit_idx = df.index.names.index("unit") if "unit" in df.index.names else -1
             for idx, cols in df.iterrows():
@@ -71,7 +118,9 @@ class SentinelSimulation(Simulation):
                 else:
                     carrier = None
                 tech = get_nis_name(idx[tech_idx]) if tech_idx >= 0 else None
+                subtech = get_nis_name(idx[subtech_idx]) if subtech_idx >= 0 else None
                 scenario = get_nis_name(idx[scenario_idx]) if scenario_idx >= 0 else None
+                subscenario = get_nis_name(idx[subscenario_idx]) if subscenario_idx >= 0 else None
                 time_ = str(idx[time_idx]) if time_idx >= 0 else default_time
                 unit_ = idx[unit_idx] if unit_idx >= 0 else None
                 if region:
@@ -83,43 +132,27 @@ class SentinelSimulation(Simulation):
                 if time_:
                     times.add(time_)
                 if tech:
-                    techs.add(tech)
+                    if subtech:
+                        techs.add(f"{tech}:{subtech}")
+                    else:
+                        techs.add(tech)
                 if tech and region:
-                    ctc.add((tech, region, carrier))  # Carrier can be None
+                    if subtech:
+                        t = f"{tech}:{subtech}"
+                    else:
+                        t = tech
+                    ctc.add((t, region, carrier))  # Carrier can be None
                 if unit_:
                     units.add(unit_)
                 if not region and not scenario and not time_:
                     region = scenario = time_ = "-"
                 # -- Add COLS information --
-                k = SimStructuralProcessorAttributes.partial_key(tech, region, carrier, scenario, time_)
-                if carrier_idx >= 0 and not carrier:
-                    continue
-                if tech is None or not region or region == "-":
-                    # print(f"WARNING: Missing Tech and/or Region: {k}. Skipped")
-                    continue
-                # (tech, region, scenario, time) - (cols)
-                o = prd.get(k)
-                if len(o) == 0:
-                    pa = SimStructuralProcessorAttributes(tech, region, carrier, scenario, time_)
-                    prd.put(k, pa)
-                elif len(o) == 1:
-                    pa = o[0]
-                else:
-                    raise Exception(f"Found {len(o)} occurrences of SimStructuralProcessorAttributes: {k}")
-                # Variables from current pd.DataFrame
-                _ = pa.attrs
-                for col in df.columns:
-                    v = cols[col]
-                    if isfloat(v):
-                        v = float(v)
-                    if col not in _:
-                        _[col] = v
-                    else:
-                        if isinstance(v, float):
-                            _[col] += v  # SUM
-                        else:
-                            _[col] = v  # Overwrite
-                # pa.attrs.update({k: cols[k] for k in df.columns})
+                d = {col: cols[col] for col in df.columns}
+                create_register_processor_and_attributes(prd, tech, region, carrier, scenario, time_, subtech, subscenario, d)
+                if subtech:
+                    # Subtech == g_default_subtech (something different from None)
+                    create_register_processor_and_attributes(prd, tech, region, carrier, scenario, time_, g_default_subtech, subscenario, d)
+
         return prd, scenarios, regions, times, techs, carriers, units, col_types, ctc
 
     def generate_template_data(self):

@@ -24,14 +24,14 @@ from enbios.common.helper import generate_workbook, list_to_dataframe, get_scena
 from enbios.input import Simulation
 from enbios.input.lci import LCIIndex
 from enbios.input.simulators.sentinel import SentinelSimulation
-from enbios.model import SimStructuralProcessorAttributes
+from enbios.model import SimStructuralProcessorAttributes, g_default_subtech
 from enbios.processing import read_parse_configuration, read_submit_solve_nis_file
 
 
 #####################################################
 # MAIN ENTRY POINT  #################################
 #####################################################
-_idx_cols = ["region", "scenario", "technology", "model", "carrier",
+_idx_cols = ["region", "scenario", "subscenario", "technology", "subtechnology", "model", "carrier",
              "year", "time", "timestep", "unit", "variable", "description"]
 
 
@@ -237,6 +237,7 @@ class Enviro:
         if split_by_period and len(times) > 0:
             partition_lists.append([("_d", t) for t in times])
             mandatory_attributes.append("time")
+        # TODO Spores
         if split_by_scenario and len(scenarios) > 0:
             partition_lists.append([("_s", s) for s in scenarios])
             mandatory_attributes.append("scenario")
@@ -991,9 +992,14 @@ def process_fragment(base_serial_state: bytes,
         region = p.attrs.get("region", "")
         carrier = p.attrs.get("carrier", "")
         tech = p.attrs.get("technology", "")
+        subtech = p.attrs.get("subtechnology", g_default_subtech)
+        subscenario = p.attrs.get("subscenario", "")
         if carrier == "":
-            print(f"Processor {p.attrs} ignored because carrier is not defined")
+            print(f"'carrier' is not defined for processor {p.attrs}, ignored")
             continue  # Ignore processors not having carrier defined
+        if subtech != g_default_subtech:
+            print(f"'subtechnology' field is not supported, processor {p.attrs} ignored")
+            continue  # Ignore processors having subtechnology defined
 
         # Find "LCI" and "Reference Tech" matching Processor(s)
         # (considering "carrier" - "EcoinventCarrierName" if it is defined)
