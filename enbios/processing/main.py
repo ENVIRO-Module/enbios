@@ -17,7 +17,8 @@ from nexinfosys.command_generators import IType, Issue
 from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue, create_dictionary
 from nexinfosys.embedded_nis import NIS
 from nexinfosys.model_services import State
-from nexinfosys.models.musiasem_concepts import Processor, ProcessorsRelationPartOfObservation, Indicator
+from nexinfosys.models.musiasem_concepts import Processor, ProcessorsRelationPartOfObservation, Indicator, \
+    FactorQuantitativeObservation
 from nexinfosys.serialization import deserialize_state
 
 from enbios.common.helper import generate_workbook, list_to_dataframe, get_scenario_name
@@ -728,7 +729,7 @@ def process_fragment(base_serial_state: bytes,
                                          f"Country level processor, region '{reg}'", "", "", "", "", reg, reg])
             considered = set()
             for p_name, proc in base_musiasem_procs.items():
-                if len(p_name.split(".")) > 1 and p not in considered:
+                if len(p_name.split(".")) > 1 and p_sim not in considered:
                     considered.add(proc)
                     # InvokingInterface, RequestedInterface, Scale are mandatory; specify something here
                     cloners_list.append((reg, p_name, "Clone", "", "", ""))
@@ -813,6 +814,14 @@ def process_fragment(base_serial_state: bytes,
         tech_desired_output_name = matching_tech_proc.attributes.get("EcoinventCarrierName")
         tech_output_to_spold_factor = float(matching_tech_proc.attributes.get("SimulationToEcoinventFactor", "1.0"))
         observer = get_scenario_name("o", scenario)
+        # Interfaces from MuSIASEM tech
+        for i in matching_tech_proc.factors:
+            for o in i.observations:
+                if isinstance(o, FactorQuantitativeObservation):
+                    interfaces.append([name, i.name, "", "", "", i.orientation, "", "", "", "", o.value,
+                                       "", "", "", "", "", "", o.attributes["time"],
+                                       o.observer.name if o.observer else "", "", ""])
+
         # Interfaces from simulation
         for i in set(proc.attrs.keys()).difference(_idx_cols):
             i_name = i
@@ -979,52 +988,53 @@ def process_fragment(base_serial_state: bytes,
         # Modify all parent processors system to region "r"
         if len(fragment_metadata["regions"]) == 1:
             r = next(iter(fragment_metadata["regions"]))
-            for p in dendrogram_musiasem_procs.values():
-                p.processor_system = r
+            for p_sim in dendrogram_musiasem_procs.values():
+                p_sim.processor_system = r
 
     # FOR EACH SIMULATION PROCESSOR (of the fragment)
     iamc_codes_techs = create_dictionary()
-    for p in fragment_processors:
+    for p_sim in fragment_processors:
         # Update time and scenario
         # (they can change from entry to entry, but for MuSIASEM the same functional Processor is used)
-        time_ = p.attrs.get("time", p.attrs.get("year", default_time))
-        scenario = p.attrs.get("scenario", "")
-        region = p.attrs.get("region", "")
-        carrier = p.attrs.get("carrier", "")
-        tech = p.attrs.get("technology", "")
-        subtech = p.attrs.get("subtechnology", g_default_subtech)
-        subscenario = p.attrs.get("subscenario", "")
+        time_ = p_sim.attrs.get("time", p_sim.attrs.get("year", default_time))
+        scenario = p_sim.attrs.get("scenario", "")
+        region = p_sim.attrs.get("region", "")
+        carrier = p_sim.attrs.get("carrier", "")
+        tech = p_sim.attrs.get("technology", "")
+        subtech = p_sim.attrs.get("subtechnology", g_default_subtech)
+        subscenario = p_sim.attrs.get("subscenario", "")
         if carrier == "":
-            print(f"'carrier' is not defined for processor {p.attrs}, ignored")
+            print(f"'carrier' is not defined for processor {p_sim.attrs}, ignored")
             continue  # Ignore processors not having carrier defined
         if subtech != g_default_subtech:
-            print(f"'subtechnology' field is not supported, processor {p.attrs} ignored")
+            print(f"'subtechnology' field is not supported, processor {p_sim.attrs} ignored")
             continue  # Ignore processors having subtechnology defined
 
         # Find "LCI" and "Reference Tech" matching Processor(s)
         # (considering "carrier" - "EcoinventCarrierName" if it is defined)
-        matching_lci, matching_tech = _find_lci_and_tech_processors(prd,
-                                                                    structural_not_accounted_procs,
-                                                                    dendrogram_musiasem_procs,
-                                                                    p)
-        if matching_tech is None:
-            print(f"Could not find a tech processor matching {p.attrs}. Skipping")
+        matching_lci, matching_not_accounted_reference_tech = _find_lci_and_tech_processors(prd,
+                                                                                            structural_not_accounted_procs,
+                                                                                            dendrogram_musiasem_procs,
+                                                                                            p_sim)
+        if matching_not_accounted_reference_tech is None:
+            print(f"Could not find a tech processor matching {p_sim.attrs}. Skipping")
             continue
 
         # Parent processor(s) in "MUSIASEM Dendrogram"
-        musiasem_matches = _find_parents(prd, structural_not_accounted_procs, matching_tech)
+        musiasem_matches = _find_parents(prd, structural_not_accounted_procs, matching_not_accounted_reference_tech)
         if musiasem_matches is None or len(musiasem_matches) == 0:
-            print(f"{p} has no parents. Cannot account it, skipped.")
+            print(f"{p_sim} has no parents. Cannot account it, skipped.")
             continue
 
-        iamc_codes_techs[tech] = matching_tech.attributes.get("iamccode", matching_tech.full_hierarchy_name.replace(".", "|"))
+        iamc_codes_techs[tech] = matching_not_accounted_reference_tech.attributes.get(
+            "iamccode", matching_not_accounted_reference_tech.full_hierarchy_name.replace(".", "|"))
 
         # Add PROCESSOR(S)
-        name, parent = _add_processor(p, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
+        name, parent = _add_processor(p_sim, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
 
         # Add INTERFACES (FROM Simulation AND FROM LCI), if we had a processor added (a name)
         if name:  # At least a match? -> add Interfaces, combining
-            _add_interfaces(p, name, parent, matching_lci, matching_tech)
+            _add_interfaces(p_sim, name, parent, matching_lci, matching_not_accounted_reference_tech)
 
     print(f"Generating NIS file ...")  # for: {fragment_metadata}")
 
