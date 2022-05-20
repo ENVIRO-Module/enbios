@@ -8,7 +8,7 @@ from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
 from enbios.common.helper import list_to_dataframe, get_scenario_name, isfloat
 from enbios.input import Simulation
-from enbios.input.simulators import create_register_or_update_processor_and_attributes
+from enbios.input.simulators import create_register_or_update_processor_and_attributes, find_column_idx_name
 from enbios.model import SimStructuralProcessorAttributes, g_default_subtech
 from friendly_data.dpkg import read_pkg
 from friendly_data.converters import to_df
@@ -53,19 +53,14 @@ class SentinelSimulation(Simulation):
             df = to_df(res)
             # print(f"INDEX: {df.index.names}; COLUMNS: {df.columns}")
             col_types.update(df.columns)
-            region_idx = df.index.names.index("region") if "region" in df.index.names else -1
-            carrier_name = "carrier" if "carrier" in df.index.names else "carriers" if "carriers" in df.index.names else None
-            carrier_idx = df.index.names.index(carrier_name) if carrier_name is not None else -1
-            tech_name = "technology" if "technology" in df.index.names else "sector" if "sector" in df.index.names else None
-            tech_idx = df.index.names.index(tech_name) if tech_name in df.index.names else -1
-            subtech_name = "subtechnology" if "subtechnology" in df.index.names else "subsector" if "subsector" in df.index.names else None
-            subtech_idx = df.index.names.index(subtech_name) if subtech_name in df.index.names else -1
-            scenario_name = "scenario" if "scenario" in df.index.names else "storyline" if "storyline" in df.index.names else None
-            scenario_idx = df.index.names.index(scenario_name) if scenario_name is not None else -1
-            subscenario_name = "subscenario" if "subscenario" in df.index.names else "spore" if "spore" in df.index.names else None
-            subscenario_idx = df.index.names.index(subscenario_name) if subscenario_name is not None else -1
-            time_name = "time" if "time" in df.index.names else "year" if "year" in df.index.names else None
-            # TODO Ignore variable. Not prepared for "timesteps", monthly values
+            region_idx, _ = find_column_idx_name(df.columns, ["region", "regions", "loc", "locs"])
+            carrier_idx, _ = find_column_idx_name(df.columns, ["carrier", "carriers"])
+            tech_idx, _ = find_column_idx_name(df.columns, ["technology", "technologies", "tech", "techs", "sector", "sectors"])
+            subtech_idx, _ = find_column_idx_name(df.columns, ["subtechnology", "subtechnologies", "subtech", "subtechs", "subsector", "subsectors"])
+            scenario_idx, _ = find_column_idx_name(df.columns, ["scenario", "scenarios", "storyline", "storylines"])
+            subscenario_idx, _ = find_column_idx_name(df.columns, ["subscenario", "subscenarios", "substoryline", "substorylines", "spore", "spores"])
+            time_idx, time_name = find_column_idx_name(df.columns, ["time", "year", "years"])
+            # TODO Ignore variable. Not prepared for "timesteps" (monthly values)
             if time_name is None and "timesteps" in df.index.names:
                 continue
             # TODO Ignore variable. Not prepared for "subsubsectors" (service_demand.csv)

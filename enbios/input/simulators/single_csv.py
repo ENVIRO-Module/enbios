@@ -1,10 +1,12 @@
+from typing import Tuple
+
 import pandas as pd
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
 
 from enbios.common.helper import list_to_dataframe, get_scenario_name, isfloat
 from enbios.input import Simulation
-from enbios.input.simulators import create_register_or_update_processor_and_attributes
+from enbios.input.simulators import create_register_or_update_processor_and_attributes, find_column_idx_name
 from enbios.model import SimStructuralProcessorAttributes, g_default_subtech
 
 
@@ -40,29 +42,18 @@ s1, r1, 2020, tech3, carrier1, 1.5, 2.8
         col_types = set()  # Interface types
         ctc = set()  # Country - Tech - Carrier
         # print(f"SENTINEL INDEX: {self._sentinel_index_path}")
-        df = pd.read_csv(self._file_path)
+        df = pd.read_csv(self._file_path, sep=None)  # sep=None -> "detect separator"
         df.columns = [c.strip().lower() for c in df.columns]
         prd = PartialRetrievalDictionary()
         col_types.update(df.columns)
-        region_idx = df.columns.get_loc("region") if any(df.columns.isin(["region"])) else -1
-        carrier_name = "carrier" if any(df.columns.isin(["carrier"])) else "carriers" if any(df.columns.isin(["carriers"])) else None
-        carrier_idx = df.columns.get_loc(carrier_name) if carrier_name is not None else -1
-        tech_name = "technology" if any(df.columns.isin(["technology"])) else "sector" if any(df.columns.isin(["sector"])) else None
-        tech_idx = df.columns.get_loc(tech_name) if any(df.columns.isin([tech_name])) else -1
-        subtech_name = "subtechnology" if any(df.columns.isin(["subtechnology"])) else "subsector" if any(df.columns.isin(["subsector"])) else None
-        subtech_idx = df.columns.get_loc(subtech_name) if any(df.columns.isin([subtech_name])) else -1
-        scenario_name = "scenario" if any(df.columns.isin(["scenario"])) else "storyline" if any(df.columns.isin(["storyline"])) else None
-        scenario_idx = df.columns.get_loc(scenario_name) if scenario_name is not None else -1
-        subscenario_name = "subscenario" if any(df.columns.isin(["subscenario"])) else "spore" if any(df.columns.isin(["spore"])) else None
-        subscenario_idx = df.columns.get_loc(subscenario_name) if subscenario_name is not None else -1
-        time_name = "time" if any(df.columns.isin(["time"])) else "year" if any(df.columns.isin(["year"])) else None
-        # if time_name is None and "timesteps" in df.index.names:
-        #     continue
-        # # TODO Ignore variable. Not prepared for "subsubsectors" (service_demand.csv)
-        # if "subsubsector" in df.index.names:
-        #     continue
-        time_idx = df.columns.get_loc(time_name) if time_name is not None else -1
-        unit_idx = df.columns.get_loc("unit") if any(df.columns.isin(["unit"])) else -1
+        region_idx, _ = find_column_idx_name(df.columns, ["region", "regions", "loc", "locs"])
+        carrier_idx, _ = find_column_idx_name(df.columns, ["carrier", "carriers"])
+        tech_idx, _ = find_column_idx_name(df.columns, ["technology", "technologies", "tech", "techs", "sector", "sectors"])
+        subtech_idx, _ = find_column_idx_name(df.columns, ["subtechnology", "subtechnologies", "subtech", "subtechs", "subsector", "subsectors"])
+        scenario_idx, _ = find_column_idx_name(df.columns, ["scenario", "scenarios", "storyline", "storylines"])
+        subscenario_idx, _ = find_column_idx_name(df.columns, ["subscenario", "subscenarios", "substoryline", "substorylines", "spore", "spores"])
+        time_idx, _ = find_column_idx_name(df.columns, ["time", "year", "years"])
+        unit_idx, _ = find_column_idx_name(df.columns, ["unit", "units"])
         idxs = set([region_idx, carrier_idx, tech_idx, subtech_idx, scenario_idx, subscenario_idx, time_idx, unit_idx])
         for idx in idxs:
             if idx >= 0:
@@ -270,4 +261,5 @@ s1, r1, 2020, tech3, carrier1, 1.5, 2.8
 
 
 if __name__ == '__main__':
+    tmp = AllInACSV("/home/rnebot/Downloads/Test_Rafa.csv").read("", "2022")
     tmp = AllInACSV("/home/rnebot/GoogleDrive/AA_SENTINEL/all_in_one.csv").read("", "2022")

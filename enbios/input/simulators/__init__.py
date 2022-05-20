@@ -1,3 +1,5 @@
+from typing import Tuple
+
 from enbios.common.helper import isfloat
 from enbios.model import SimStructuralProcessorAttributes
 
@@ -39,3 +41,14 @@ def create_register_or_update_processor_and_attributes(prd,
             else:
                 _[key] = v  # Overwrite
     return pa
+
+
+def find_column_idx_name(columns, possible_values) -> Tuple[int, str]:
+    if any(columns.isin(possible_values)):
+        for p in possible_values:
+            try:
+                return columns.get_loc(p), p
+            except:
+                continue
+    else:
+        return -1, None
