@@ -25,6 +25,7 @@ from enbios.common.helper import generate_workbook, list_to_dataframe, get_scena
 from enbios.input import Simulation
 from enbios.input.lci import LCIIndex
 from enbios.input.simulators.sentinel import SentinelSimulation
+from enbios.input.simulators.single_csv import AllInACSV
 from enbios.model import SimStructuralProcessorAttributes, g_default_subtech
 from enbios.processing import read_parse_configuration, read_submit_solve_nis_file
 
@@ -165,6 +166,9 @@ class Enviro:
         simulation = None
         if self._cfg["simulation_type"].lower() == "sentinel":
             simulation = SentinelSimulation(self._simulation_files_path)
+        elif self._cfg["simulation_type"].lower() == "single_csv":
+            simulation = AllInACSV(self._simulation_files_path)
+
         # elif self._cfg["simulation_type"].lower() == "calliope":
         #     simulation = CalliopeSimulation(self._simulation_files_path)
         return simulation
