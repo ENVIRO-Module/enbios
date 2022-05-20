@@ -8,6 +8,7 @@ from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
 from enbios.common.helper import list_to_dataframe, get_scenario_name, isfloat
 from enbios.input import Simulation
+from enbios.input.simulators import create_register_or_update_processor_and_attributes
 from enbios.model import SimStructuralProcessorAttributes, g_default_subtech
 from friendly_data.dpkg import read_pkg
 from friendly_data.converters import to_df
@@ -17,7 +18,7 @@ class SentinelSimulation(Simulation):
     def __init__(self, sentinel_index_path):
         self._sentinel_index_path = sentinel_index_path
 
-    def read_raw(self):
+    def read_raw(self):  # Not used
         """ Read variables and datasets """
         pkg = read_pkg(self._sentinel_index_path)
         lst = []
@@ -33,43 +34,6 @@ class SentinelSimulation(Simulation):
         :param default_time: Default time to use if none specified in the inputs
         :return: A tuple with assorted elements, from lists of possible values for dimensions to a registry of Processors
         """
-
-        def create_register_processor_and_attributes(prd,
-                                                     tech, region, carrier, scenario, time_, subtech, subscenario,
-                                                     attrs):
-            # tech, region, carrier, scenario, time_, subtech, subscenario -> for col in df.columns
-            k = SimStructuralProcessorAttributes.partial_key(tech, region, carrier, scenario, time_,
-                                                             subtech, subscenario)
-            if carrier_idx >= 0 and not carrier:
-                return None
-            if tech is None or not region or region == "-":
-                # print(f"WARNING: Missing Tech and/or Region: {k}. Skipped")
-                return None
-            # (tech, region, scenario, time) - (cols)
-            o = prd.get(k)
-            if len(o) == 0:
-                pa = SimStructuralProcessorAttributes(tech, region, carrier, scenario, time_, subtech, subscenario)
-                prd.put(k, pa)
-            elif len(o) == 1:
-                pa = o[0]
-            else:
-                raise Exception(f"Found {len(o)} occurrences of SimStructuralProcessorAttributes: {k}")
-            # Variables from current pd.DataFrame
-            _ = pa.attrs
-            for key, v in attrs.items():
-                if isfloat(v):
-                    v = float(v)
-                if key not in _:
-                    _[key] = v
-                else:
-                    if isinstance(v, float):
-                        tmp = _[key]
-                        _[key] += v  # SUM
-                        if v != 0 and tmp == _[key]:
-                            raise Exception(f"ERROR: did not change. value: {v}, previous: {tmp}")
-                    else:
-                        _[key] = v  # Overwrite
-            return pa
 
         if filter_model is None:  # Mandatory
             return
@@ -148,10 +112,10 @@ class SentinelSimulation(Simulation):
                     region = scenario = time_ = "-"
                 # -- Add COLS information --
                 d = {col: cols[col] for col in df.columns}
-                create_register_processor_and_attributes(prd, tech, region, carrier, scenario, time_, subtech, subscenario, d)
+                create_register_or_update_processor_and_attributes(prd, tech, region, carrier, scenario, time_, subtech, subscenario, carrier_idx, d)
                 if subtech:
                     # Subtech == g_default_subtech (something different from None)
-                    create_register_processor_and_attributes(prd, tech, region, carrier, scenario, time_, g_default_subtech, subscenario, d)
+                    create_register_or_update_processor_and_attributes(prd, tech, region, carrier, scenario, time_, g_default_subtech, subscenario, carrier_idx, d)
 
         return prd, scenarios, regions, times, techs, carriers, units, col_types, ctc
 
