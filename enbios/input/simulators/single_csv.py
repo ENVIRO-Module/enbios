@@ -42,7 +42,7 @@ s1, r1, 2020, tech3, carrier1, 1.5, 2.8
         col_types = set()  # Interface types
         ctc = set()  # Country - Tech - Carrier
         # print(f"SENTINEL INDEX: {self._sentinel_index_path}")
-        df = pd.read_csv(self._file_path, sep=None)  # sep=None -> "detect separator"
+        df = pd.read_csv(self._file_path, sep=None, engine="python")  # sep=None -> "detect separator"
         df.columns = [c.strip().lower() for c in df.columns]
         prd = PartialRetrievalDictionary()
         col_types.update(df.columns)
