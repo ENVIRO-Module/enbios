@@ -816,6 +816,7 @@ def process_fragment(base_serial_state: bytes,
         relative_to = None
         tech_output_name = matching_tech_proc.attributes.get("SimulationVariable")
         tech_desired_output_name = matching_tech_proc.attributes.get("EcoinventCarrierName")
+        tech_simulation_scaling_factor = float(matching_tech_proc.attributes.get("SimulationScalingFactor", "1.0"))
         tech_output_to_spold_factor = float(matching_tech_proc.attributes.get("SimulationToEcoinventFactor", "1.0"))
         observer = get_scenario_name("o", scenario)
         # Interfaces from MuSIASEM tech
@@ -833,7 +834,7 @@ def process_fragment(base_serial_state: bytes,
             if is_main_flow(i, tech_output_name):
                 if tech_desired_output_name:
                     i_name = tech_desired_output_name
-                v *= tech_output_to_spold_factor  # Change scale
+                v *= tech_output_to_spold_factor * tech_simulation_scaling_factor  # Change scale
                 relative_to = i_name  # All LCI interfaces will be relative to main output
                 orientation = "Output"
             else:
