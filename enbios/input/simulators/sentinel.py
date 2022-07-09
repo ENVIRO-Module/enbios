@@ -4,6 +4,7 @@ Read a Sentinel model definition and outputs, to obtain one or more DiGraphs whi
 obtain either a MuSIASEM or LCA structure
 
 """
+import pandas as pd
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
 from enbios.common.helper import list_to_dataframe, get_scenario_name, isfloat
@@ -53,21 +54,22 @@ class SentinelSimulation(Simulation):
             df = to_df(res)
             # print(f"INDEX: {df.index.names}; COLUMNS: {df.columns}")
             col_types.update(df.columns)
-            region_idx, _ = find_column_idx_name(df.columns, ["region", "regions", "loc", "locs"])
-            carrier_idx, _ = find_column_idx_name(df.columns, ["carrier", "carriers"])
-            tech_idx, _ = find_column_idx_name(df.columns, ["technology", "technologies", "tech", "techs", "sector", "sectors"])
-            subtech_idx, _ = find_column_idx_name(df.columns, ["subtechnology", "subtechnologies", "subtech", "subtechs", "subsector", "subsectors"])
-            scenario_idx, _ = find_column_idx_name(df.columns, ["scenario", "scenarios", "storyline", "storylines"])
-            subscenario_idx, _ = find_column_idx_name(df.columns, ["subscenario", "subscenarios", "substoryline", "substorylines", "spore", "spores"])
-            time_idx, time_name = find_column_idx_name(df.columns, ["time", "year", "years"])
+            region_idx, _ = find_column_idx_name(pd.Index(df.index.names), ["region", "regions", "loc", "locs"])
+            carrier_idx, _ = find_column_idx_name(pd.Index(df.index.names), ["carrier", "carriers"])
+            tech_idx, _ = find_column_idx_name(pd.Index(df.index.names), ["technology", "technologies", "tech", "techs", "sector", "sectors"])
+            subtech_idx, _ = find_column_idx_name(pd.Index(df.index.names), ["subtechnology", "subtechnologies", "subtech", "subtechs", "subsector", "subsectors"])
+            scenario_idx, _ = find_column_idx_name(pd.Index(df.index.names), ["scenario", "scenarios", "storyline", "storylines"])
+            subscenario_idx, _ = find_column_idx_name(pd.Index(df.index.names), ["subscenario", "subscenarios", "substoryline", "substorylines", "spore", "spores"])
+            time_idx, time_name = find_column_idx_name(pd.Index(df.index.names), ["time", "year", "years"])
+            unit_idx, unit_name = find_column_idx_name(pd.Index(df.index.names), ["unit", "units"])
             # TODO Ignore variable. Not prepared for "timesteps" (monthly values)
             if time_name is None and "timesteps" in df.index.names:
                 continue
             # TODO Ignore variable. Not prepared for "subsubsectors" (service_demand.csv)
             if "subsubsector" in df.index.names:
                 continue
-            time_idx = df.index.names.index(time_name) if time_name is not None else -1
-            unit_idx = df.index.names.index("unit") if "unit" in df.index.names else -1
+            # time_idx = df.index.names.index(time_name) if time_name is not None else -1
+            # unit_idx = df.index.names.index("unit") if "unit" in df.index.names else -1
             for idx, cols in df.iterrows():
                 if not isinstance(idx, tuple):  # When it is not a MultiIndex, Pandas has "idx" to not be a Tuple; workaround: convert into a Tuple of a single element
                     idx = (idx,)
