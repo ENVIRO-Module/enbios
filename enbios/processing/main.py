@@ -141,7 +141,6 @@ def parallelizable_process_fragment(param: Tuple[str,  # Fragment label
                                keep_fragment_file,
                                generate_nis_fragment_file,
                                generate_interface_results)
-
     end = time.time()  # Stop timing
     print(f"Fragment processed in {end - start} seconds ---------------------------------------")
     write_outputs(outputs)
@@ -352,6 +351,7 @@ class Enviro:
         default_time = self._cfg.get("simulation_default_time")
         fragments = sorted([_ for _ in self._read_simulation_fragments(default_time=default_time)],
                            key=operator.itemgetter(0))
+        fragments = [_ for _ in fragments if len(_[3]) > 0]
 
         # Produce file with an enumeration of fragments
         if fragments_list_file:
@@ -404,7 +404,6 @@ class Enviro:
                                                 development_nis_file,
                                                 generate_nis_fragment_file, generate_interface_results,
                                                 generate_indicators, max_lci_interfaces, keep_fragment_file)
-
         else:
             p = Pool(n_cpus)
             p.map(functools.partial(parallelizable_process_fragment,
