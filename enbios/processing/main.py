@@ -540,6 +540,10 @@ def process_fragment(base_serial_state: bytes,
           if skip_aux_structural AND is_structural(P(Sim)) AND is_not_accounted(P(Sim)) -> P(Sim) = P(P(Sim))
     """
 
+    # Declare (InterfaceType) the original (from simulation) name even if it is renamed (EcoinventCarrierName) and
+    # duplicate the Interface with the original and the changed name
+    write_original_interface = True
+
     def _get_processors_by_type():
         """
         Returns two sets of Processors:
@@ -586,7 +590,7 @@ def process_fragment(base_serial_state: bytes,
         # SimProc(tech, carrier) ->(child-of)-> FunctMuSProc(ParentProc)
         # SimProc(tech, carrier) as StrucMuSProc(tech, carrier2)
 
-    def _find_lci_and_tech_processors(reg: PartialRetrievalDictionary, structural_procs, base_procs, p):
+    def _find_lci_and_tech_processors(reg: PartialRetrievalDictionary, structural_procs, base_procs, p) -> Dict[Processor, List]:
         """
         Find LCI Processor(s) which are assimilated to "p"
           - Processor "p" should exist, as Structural/not-Accounted, with a Parent, [with no Interfaces?]
@@ -616,7 +620,7 @@ def process_fragment(base_serial_state: bytes,
             return lci_proc
 
         # Find structural not accounted matching the sim processor (match tech name and proc carrier name)
-        target = None  # type: Processor
+        targets: Dict[Processor, List] = {}
         tech = p.attrs["technology"].lower()
         carrier_ = p.attrs["carrier"].lower()  # Mandatory
         for proc_name, proc in structural_procs.items():
@@ -629,11 +633,11 @@ def process_fragment(base_serial_state: bytes,
                     elif "EcoinventCarrierName" in proc.attributes:
                         carrier_field = "EcoinventCarrierName"  # It should never enter here
                     if proc.attributes.get(carrier_field, "").lower() == carrier_:
-                        target = proc
-                        break
+                        targets[proc] = []
                 else:
-                    target = proc  # If "tech" matches and "carrier_" is ""
-        if target:
+                    targets[proc] = []  # If "tech" matches and "carrier_" is ""
+
+        for target in targets.keys():
             lci_proc = _find_reference_lci_processor(target, structural_procs)
             if lci_proc is None:
                 # Parent
@@ -641,11 +645,12 @@ def process_fragment(base_serial_state: bytes,
                 for proc_name, proc in base_procs.items():
                     if s1 == proc_name:
                         lci_proc = _find_reference_lci_processor(proc, structural_procs)
+                        targets[target].append(lci_proc)
                         break
-        else:
-            lci_proc = None
+            else:
+                targets[target].append(lci_proc)
 
-        return [lci_proc], target
+        return targets
 
     def _generate_fragment_nis_file(clone_processors, cloners, processors, interfaces, variables, scenarios):
         """
@@ -829,6 +834,7 @@ def process_fragment(base_serial_state: bytes,
         # Interfaces from simulation
         for i in set(proc.attrs.keys()).difference(_idx_cols):
             i_name = i
+            input_i_name = i_name
             v = proc.attrs[i]
             if is_main_flow(i, tech_output_name):
                 if tech_desired_output_name:
@@ -840,8 +846,13 @@ def process_fragment(base_serial_state: bytes,
                 orientation = get_flow_orientation(i)
             interfaces.append([proc_name, i_name, "", "", "", orientation, "", "", "", "", v,
                                "", "", "", "", "", "", time_, observer, "", ""])
+            if write_original_interface and input_i_name != i_name:
+                interfaces.append([proc_name, input_i_name, "", "", "", orientation, "", "", "", "", v,
+                                   "", "", "", "", "", "", time_, observer, "", ""])
             if i_name not in variables:
                 variables[i_name] = dict(main_flow=is_main_flow(i), orientation=orientation, unit=get_flow_unit(i))
+            if write_original_interface and input_i_name not in variables:
+                variables[input_i_name] = dict(main_flow=False, orientation=orientation, unit=get_flow_unit(i))
 
         if lci_matches[0] is None or len(lci_matches) == 0:
             print(f"{proc.attrs} does not have an LCI processor associated. "
@@ -1010,35 +1021,42 @@ def process_fragment(base_serial_state: bytes,
         if carrier == "":
             print(f"'carrier' is not defined for processor {p_sim.attrs}, ignored")
             continue  # Ignore processors not having carrier defined
-        if subtech != g_default_subtech:
-            print(f"'subtechnology' field is not supported, processor {p_sim.attrs} ignored")
+        from enbios import subtech_supported
+        if subtech_supported and subtech != g_default_subtech:
+            # TODO Add subtech support
+            print(f"'subtechnology' field is not really supported, processor {p_sim.attrs} ignored")
             continue  # Ignore processors having subtechnology defined
 
         # Find "LCI" and "Reference Tech" matching Processor(s)
         # (considering "carrier" - "EcoinventCarrierName" if it is defined)
-        matching_lci, matching_not_accounted_reference_tech = _find_lci_and_tech_processors(prd,
-                                                                                            structural_not_accounted_procs,
-                                                                                            dendrogram_musiasem_procs,
-                                                                                            p_sim)
-        if matching_not_accounted_reference_tech is None:
+        # matching_lci, matching_not_accounted_reference_tech = _find_lci_and_tech_processors(prd,
+        #                                                                                     structural_not_accounted_procs,
+        #                                                                                     dendrogram_musiasem_procs,
+        #                                                                                     p_sim)
+        matching_not_accounted_reference_techs = _find_lci_and_tech_processors(prd,
+                                                                               structural_not_accounted_procs,
+                                                                               dendrogram_musiasem_procs,
+                                                                               p_sim)
+        if len(matching_not_accounted_reference_techs) == 0:
             print(f"Could not find a tech processor matching {p_sim.attrs}. Skipping")
             continue
 
-        # Parent processor(s) in "MUSIASEM Dendrogram"
-        musiasem_matches = _find_parents(prd, structural_not_accounted_procs, matching_not_accounted_reference_tech)
-        if musiasem_matches is None or len(musiasem_matches) == 0:
-            print(f"{p_sim} has no parents. Cannot account it, skipped.")
-            continue
+        for matching_not_accounted_reference_tech, matching_lci in matching_not_accounted_reference_techs.items():
+            # Parent processor(s) in "MUSIASEM Dendrogram"
+            musiasem_matches = _find_parents(prd, structural_not_accounted_procs, matching_not_accounted_reference_tech)
+            if musiasem_matches is None or len(musiasem_matches) == 0:
+                print(f"{p_sim} has no parents. Cannot account it, skipped.")
+                continue
 
-        iamc_codes_techs[tech] = matching_not_accounted_reference_tech.attributes.get(
-            "iamccode", matching_not_accounted_reference_tech.full_hierarchy_name.replace(".", "|"))
+            iamc_codes_techs[tech] = matching_not_accounted_reference_tech.attributes.get(
+                "iamccode", matching_not_accounted_reference_tech.full_hierarchy_name.replace(".", "|"))
 
-        # Add PROCESSOR(S)
-        name, parent = _add_processor(p_sim, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
+            # Add PROCESSOR(S)
+            name, parent = _add_processor(p_sim, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
 
-        # Add INTERFACES (FROM Simulation AND FROM LCI), if we had a processor added (a name)
-        if name:  # At least a match? -> add Interfaces, combining
-            _add_interfaces(p_sim, name, parent, matching_lci, matching_not_accounted_reference_tech)
+            # Add INTERFACES (FROM Simulation AND FROM LCI), if we had a processor added (a name)
+            if name:  # At least a match? -> add Interfaces, combining
+                _add_interfaces(p_sim, name, parent, matching_lci, matching_not_accounted_reference_tech)
 
     print(f"Generating NIS file ...")  # for: {fragment_metadata}")
 
