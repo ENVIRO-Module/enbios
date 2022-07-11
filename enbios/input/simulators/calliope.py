@@ -46,6 +46,9 @@ def map_calliope_to_available(calliope: nx.DiGraph, technologies):
 
 
 class CalliopeSimulation(Simulation):
+    """
+    Abandoned by Calliope during Sentinel project, in favor of Friendly-Data format, see "sentinel.py"
+    """
     def __init__(self, simulation_files_path):
         self._model = None
         self._simulation_files_path = simulation_files_path

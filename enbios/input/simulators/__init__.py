@@ -1,5 +1,7 @@
 from typing import Tuple
 
+import pandas as pd
+
 from enbios.common.helper import isfloat
 from enbios.model import SimStructuralProcessorAttributes
 
@@ -43,7 +45,7 @@ def create_register_or_update_processor_and_attributes(prd,
     return pa
 
 
-def find_column_idx_name(columns, possible_values) -> Tuple[int, str]:
+def find_column_idx_name(columns: pd.Index, possible_values: list) -> Tuple[int, str]:
     if any(columns.isin(possible_values)):
         for p in possible_values:
             try:

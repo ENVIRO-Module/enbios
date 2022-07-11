@@ -7,6 +7,7 @@ obtain either a MuSIASEM or LCA structure
 import pandas as pd
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 from nexinfosys.common.helper import PartialRetrievalDictionary
+
 from enbios.common.helper import list_to_dataframe, get_scenario_name, isfloat
 from enbios.input import Simulation
 from enbios.input.simulators import create_register_or_update_processor_and_attributes, find_column_idx_name
@@ -109,9 +110,13 @@ class SentinelSimulation(Simulation):
                     region = scenario = time_ = "-"
                 # -- Add COLS information --
                 d = {col: cols[col] for col in df.columns}
-                create_register_or_update_processor_and_attributes(prd, tech, region, carrier, scenario, time_, subtech, subscenario, carrier_idx, d)
                 if subtech:
-                    # Subtech == g_default_subtech (something different from None)
+                    from enbios import subtech_supported
+                    if subtech_supported:
+                        # Register information at subtech processor level
+                        create_register_or_update_processor_and_attributes(prd, tech, region, carrier, scenario, time_, subtech, subscenario, carrier_idx, d)
+                    create_register_or_update_processor_and_attributes(prd, tech, region, carrier, scenario, time_, g_default_subtech, subscenario, carrier_idx, d)
+                else:
                     create_register_or_update_processor_and_attributes(prd, tech, region, carrier, scenario, time_, g_default_subtech, subscenario, carrier_idx, d)
 
         return prd, scenarios, regions, times, techs, carriers, units, col_types, ctc
