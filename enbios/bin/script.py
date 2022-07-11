@@ -1,5 +1,6 @@
 # /usr/bin/env python
 import os
+from typing import List
 
 import fire
 import webbrowser
@@ -135,17 +136,22 @@ class Enbios:
         Example:
            enbios lcia_implementation_to_csv /home/rnebot/GoogleDrive/AA_SENTINEL/LCIA_implementation_3.7.1.xlsx /home/rnebot/GoogleDrive/AA_SENTINEL/case_studies/library/lcia_implementation_nis.csv
 
+           Just one method, using "method-is" ("method-like" is for methods containing the string):
+           enbios lcia_implementation_to_csv --method-is "ReCiPe Midpoint (H) V1.13" /home/rnebot/GoogleDrive/AA_SENTINEL/dev_lcia_methods/LCIA_implementation_3.7.1.xlsx "/home/rnebot/GoogleDrive/AA_SENTINEL/dev_nis_case_studies/library (Base)/reduced_lcia_methods_recipe_h_v113.csv"
 
         :param lcia_implementation_file: The full path of the INPUT LCIA implementation XLSX file
         :param lcia_file: The full path of the OUTPUT CSV file
         :param method_like: To filter rows, let pass only those where method contains "method_like"
+        :param method_is: To filter rows, let pass only those where method is in "method_is"
         :param include_obsolete: To not filter rows, where method is considered obsolete
         :param use_nis_name_syntax: Transform names which are used as NIS identifiers to the NIS identifier syntax
         :param log: Set log level to one of: Error (E, Err), Debug (D), Warning (W, Warn), Info (I), Off, Critical (Fatal)
         :return:
         """
         set_log_level_from_cli_param(log)
-        convert_lcia_implementation_to_nis(lcia_implementation_file, lcia_file, method_like, include_obsolete, use_nis_name_syntax)
+        convert_lcia_implementation_to_nis(lcia_implementation_file, lcia_file,
+                                           method_like, method_is,
+                                           include_obsolete, use_nis_name_syntax)
 
     # def lci_to_interface_types(self, lci_file_path: str, csv_file: str):
     #     """

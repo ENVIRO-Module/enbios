@@ -1,11 +1,13 @@
 from io import StringIO
+from typing import List
 
 import openpyxl
 import pandas as pd
 from nexinfosys.command_generators.parser_ast_evaluators import get_nis_name
 
 
-def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file: str, method_like, include_obsolete, use_nis_name_syntax):
+def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file: str,
+                                       method_like, method_is: List[str], include_obsolete, use_nis_name_syntax):
     def get_horizon(ind):
         return ""
 
@@ -22,6 +24,9 @@ def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file:
     compartments = {}  # Include subcompartments
     if method_like != "":
         method_like = method_like.lower()
+    if method_is:
+        method_is = method_is.lower()
+
     for r in range(2, units.max_row):
         method = units.cell(row=r, column=1).value.strip()
         if not include_obsolete:
@@ -29,6 +34,9 @@ def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file:
                 continue
         if method_like != "":
             if method_like not in method.lower():
+                continue
+        if method_is is not None:
+            if method_is == method:
                 continue
 
         category = units.cell(row=r, column=2).value.strip()
