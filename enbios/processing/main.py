@@ -13,6 +13,8 @@ from NamedAtomicLock import NamedAtomicLock
 from friendly_data.converters import from_df
 from nexinfosys.bin.cli_script import get_valid_name, get_file_url, prepare_base_state, print_issues
 from nexinfosys.command_generators import IType, Issue
+from nexinfosys.command_generators.parser_ast_evaluators import ast_evaluator
+from nexinfosys.command_generators.parser_field_parsers import string_to_ast, arith_boolean_expression
 
 from nexinfosys.common.helper import PartialRetrievalDictionary, any_error_issue, create_dictionary
 from nexinfosys.embedded_nis import NIS
@@ -768,7 +770,7 @@ def process_fragment(base_serial_state: bytes,
         else:
             return p, ""
 
-    def _add_processor(proc, matches, processors_list, already_added_processors_set, techs_used_in_regions):
+    def _add_processor(proc, matches, processors_list, already_added_processors_set, techs_used_in_regions, context):
         """
         Inserts elements in "processors_list", directly usable as worksheet rows in a BareProcessors command
 
@@ -777,6 +779,7 @@ def process_fragment(base_serial_state: bytes,
         :param processors_list:
         :param already_added_processors_set:
         :param techs_used_in_regions:
+        :param context:
         :return:
         """
         first_name = None
@@ -805,7 +808,7 @@ def process_fragment(base_serial_state: bytes,
                     already_added_processors_set.add((p_name, parent_name))
         return first_name, parent_name  # p_name if return_simple else first_name, parent_name
 
-    def _add_interfaces(proc, proc_name, proc_parent_name, lci_matches, matching_tech_proc) -> None:
+    def _add_interfaces(proc, proc_name, proc_parent_name, lci_matches, matching_tech_proc, context) -> None:
         """
         Inserts elements in "interfaces", directly usable as worksheet rows in an Interfaces command
 
@@ -814,13 +817,25 @@ def process_fragment(base_serial_state: bytes,
         :param proc_parent_name:
         :param lci_matches: Which LCI processors match
         :param matching_tech_proc: Which technology processor matches
+        :param context: "time", "region", "scenario", ... in which interfaces are being added
         :return:
         """
+
+        def get_tech_simulation_scaling_factor():
+            _ = matching_tech_proc.attributes.get("SimulationScalingFactor", "1.0")
+            ast = string_to_ast(arith_boolean_expression, _)
+            state = State(context)
+            issues = []
+            res, variables = ast_evaluator(ast, state, None, issues)
+            if res:
+                return res
+            else:
+                raise ValueError(f"Could not evaluate {_}. Variables: {variables}. Issues: {issues}")
 
         relative_to = None
         tech_output_name = matching_tech_proc.attributes.get("SimulationVariable")
         tech_desired_output_name = matching_tech_proc.attributes.get("EcoinventCarrierName")
-        tech_simulation_scaling_factor = float(matching_tech_proc.attributes.get("SimulationScalingFactor", "1.0"))
+        tech_simulation_scaling_factor = get_tech_simulation_scaling_factor()
         tech_output_to_spold_factor = float(matching_tech_proc.attributes.get("SimulationToEcoinventFactor", "1.0"))
         observer = get_scenario_name("o", scenario)
         # Interfaces from MuSIASEM tech
@@ -1018,6 +1033,7 @@ def process_fragment(base_serial_state: bytes,
         tech = p_sim.attrs.get("technology", "")
         subtech = p_sim.attrs.get("subtechnology", g_default_subtech)
         subscenario = p_sim.attrs.get("subscenario", "")
+        context = dict(time=time_, scenario=scenario, region=region, carrier=carrier, tech=tech, subtech=subtech)
         if carrier == "":
             print(f"'carrier' is not defined for processor {p_sim.attrs}, ignored")
             continue  # Ignore processors not having carrier defined
@@ -1052,11 +1068,11 @@ def process_fragment(base_serial_state: bytes,
                 "iamccode", matching_not_accounted_reference_tech.full_hierarchy_name.replace(".", "|"))
 
             # Add PROCESSOR(S)
-            name, parent = _add_processor(p_sim, musiasem_matches, processors, already_added_processors, techs_used_in_regions)
+            name, parent = _add_processor(p_sim, musiasem_matches, processors, already_added_processors, techs_used_in_regions, context)
 
             # Add INTERFACES (FROM Simulation AND FROM LCI), if we had a processor added (a name)
             if name:  # At least a match? -> add Interfaces, combining
-                _add_interfaces(p_sim, name, parent, matching_lci, matching_not_accounted_reference_tech)
+                _add_interfaces(p_sim, name, parent, matching_lci, matching_not_accounted_reference_tech, context)
 
     print(f"Generating NIS file ...")  # for: {fragment_metadata}")
 
