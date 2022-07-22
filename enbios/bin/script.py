@@ -126,6 +126,7 @@ class Enbios:
     def lcia_implementation_to_csv(lcia_implementation_file: str,
                                    lcia_file: str,
                                    method_like: str = "",
+                                   method_is: List[str] = [],
                                    include_obsolete: bool = False,
                                    use_nis_name_syntax: bool = True,
                                    log: str = None):
@@ -149,6 +150,8 @@ class Enbios:
         :return:
         """
         set_log_level_from_cli_param(log)
+        if isinstance(method_is, str):
+            method_is = [method_is]
         convert_lcia_implementation_to_nis(lcia_implementation_file, lcia_file,
                                            method_like, method_is,
                                            include_obsolete, use_nis_name_syntax)

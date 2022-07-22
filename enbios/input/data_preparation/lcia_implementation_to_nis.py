@@ -25,7 +25,7 @@ def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file:
     if method_like != "":
         method_like = method_like.lower()
     if method_is:
-        method_is = method_is.lower()
+        method_is = [m.lower() for m in method_is]
 
     for r in range(2, units.max_row):
         method = units.cell(row=r, column=1).value.strip()
@@ -36,7 +36,7 @@ def convert_lcia_implementation_to_nis(lcia_implementation_file: str, lcia_file:
             if method_like not in method.lower():
                 continue
         if method_is is not None:
-            if method_is == method:
+            if method.lower() not in method_is:
                 continue
 
         category = units.cell(row=r, column=2).value.strip()
