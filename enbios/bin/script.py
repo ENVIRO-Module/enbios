@@ -61,7 +61,7 @@ def list_lcia_indicators(nis_file, output_file):
             different = sorted(set([(key["m"], key["t"], key["d"], key["c"], key["s"], key["h"]) for key in keys]),
                                key=lambda x: (x[0], x[1], x[2], x[3], x[4], x[5]))
             # Prepare pseudo "ScalarIndicators" command
-            lst = [["IndicatorsGroup", "Indicator", "Local", "Formula", "Unit", "AccountNA", "UnitLabel", "Benchmarks",
+            lst = [["IndicatorsGroup", "Indicator", "Local", "Processors", "Formula", "Unit", "AccountNA", "UnitLabel", "Benchmarks",
                     "Description", "Reference"]]
             for t in different:
                 _ = {}
@@ -77,6 +77,7 @@ def list_lcia_indicators(nis_file, output_file):
                 lst.append(["LCIA",
                             f"{t[0]}_{t[1]}_{t[2]}_{t[3]}_{t[4]}",
                             "Yes",
+                            "",  # Processors ("": "all processors")
                             f'LCIAMethod("{t[0]}", "{t[1]}", "{t[2]}", "{t[3]}", "{t[4]}", "{t[5]}")',
                             unit,  # LCIA indicator unit
                             # TODO "Yes" (below) not implemented for LCIAMethod
