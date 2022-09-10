@@ -127,7 +127,7 @@ class Enbios:
     def lcia_implementation_to_csv(lcia_implementation_file: str,
                                    lcia_file: str,
                                    method_like: str = "",
-                                   method_is: List[str] = [],
+                                   method_is: List[str] = None,
                                    include_obsolete: bool = False,
                                    use_nis_name_syntax: bool = True,
                                    log: str = None):
