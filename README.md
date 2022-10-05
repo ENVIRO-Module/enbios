@@ -76,7 +76,9 @@ python3 setup.py install
 * [Cristina Madrid-Lopez](https://portalrecerca.uab.cat/en/persons/cristina-madrid-lopez-3). - [ICTA-UAB](https://www.uab.cat/icta/) 
 * [Nicholas Martin](https://portalrecerca.uab.cat/en/persons/nicholas-martin-4). - [ICTA-UAB](https://www.uab.cat/icta/)
 * [Rafael Nebot](https://www.linkedin.com/in/rafael-j-nebot-medina-31551a12/). - [ITC-DCCT](https://www.itccanarias.org/web/en/)
-* [Laura Talens-Peiro](https://portalrecerca.uab.cat/en/persons/laura-talens-peir%C3%B3-6).  -[ICTA-UAB](https://www.uab.cat/icta/) 
+* [Miquel Sierra Montoya](https://www.linkedin.com/in/miquel-sierra-montoya-0b8a28bb/).  -[ICTA-UAB](https://www.uab.cat/icta/) 
+* [Alexander de Tomás](https://www.linkedin.com/in/alexander-de-tom%C3%A1s-pascual-a85348185/).  -[ICTA-UAB](https://www.uab.cat/icta/) 
+
 
 ## Contact
 
