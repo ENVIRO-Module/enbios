@@ -42,6 +42,28 @@ def generate_csv(o):
     return s.getvalue()
 
 
+class MyEcoSpold2DataExtractor(Ecospold2DataExtractor):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+
+    @classmethod
+    def extract_properties(cls, exc):
+        properties = {}
+
+        for obj in exc.iterchildren():
+            if obj.tag.endswith("property"):
+                properties[obj.name.text] = {"amount": float(obj.get("amount"))}
+                if hasattr(obj, "unitName"):
+                    properties[obj.name.text]["unit"] = obj.unitName.text
+                if hasattr(obj, "comment"):
+                    properties[obj.name.text]["comment"] = obj.comment.text
+            elif obj.tag.endswith("compartment"):
+                properties["compartment"] = obj.compartment.text
+                properties["subcompartment"] = obj.subcompartment.text
+
+        return properties
+
+
 def read_ecospold_file(f):
     lci = None
     issues = []
@@ -54,7 +76,7 @@ def read_ecospold_file(f):
                 _original_stderr = sys.stderr
                 sys.stdout = open(os.devnull, 'w')
                 sys.stderr = sys.stdout
-                lci = Ecospold2DataExtractor.extract(name, "test", use_mp=False)
+                lci = MyEcoSpold2DataExtractor.extract(name, "test", use_mp=False)
                 sys.stdout.close()
                 sys.stdout = _original_stdout
                 sys.stderr = _original_stderr
@@ -198,7 +220,7 @@ class SpoldToNIS:
             _main_output_is_output = None
             for _idx, _r in aggregate_exchanges.iterrows():
                 if _r["amount"] == 1.0:
-                    _main_output = get_nis_name(names[_idx.lower()])
+                    _main_output = get_nis_name(_r["name"])
                     _main_output_is_output = True
                     break
             if _main_output is None:
@@ -206,7 +228,7 @@ class SpoldToNIS:
                 # (Nick clarified this unusual but possible case)
                 for _idx, _r in aggregate_exchanges.iterrows():
                     if _r["amount"] == -1.0:
-                        _main_output = get_nis_name(names[_idx.lower()])
+                        _main_output = get_nis_name(_r["name"])
                         _main_output_is_output = False
                         break
             if _main_output is None:
@@ -252,15 +274,23 @@ class SpoldToNIS:
             lst = [
                 ["Processor", "InterfaceType", "Interface", "Sphere", "RoegenType", "Orientation",
                  "OppositeSubsystemType",
-                 "GeolocationRef", "GeolocationCode", "InterfaceAttributes", "Value", "Unit", "RelativeTo",
+                 "GeolocationRef", "GeolocationCode", "I@compartment", "I@subcompartment",
+                 "Value", "Unit", "RelativeTo",
                  "Uncertainty",
                  "Assessment", "PedigreeMatrix", "Pedigree", "Time", "Source", "NumberAttributes", "Comments"]]
             for p_i, props in ifaces.items():
                 v = props["value"]
                 orientation = "Output" if props["is_output"] else "Input"
                 output_name = props["relative_to"]
-                lst.append([p_i[0], p_i[1], "", "", "", orientation, "", "", "", "", v,
-                            "", output_name, "", "", "", "", "Year", "Ecoinvent", "", ""])
+                iface = p_i[2] if len(p_i) > 2 else ""
+                comp = props["compartment"] if "compartment" in props else ""
+                subcomp = props["subcompartment"] if "subcompartment" in props else ""
+                lst.append([p_i[0], p_i[1], iface, "", "", orientation,
+                            "",
+                            "", "", comp, subcomp,
+                            v, "", output_name,
+                            "",
+                            "", "", "", "Year", "Ecoinvent", "", ""])
             _cmds.append(("Interfaces", list_to_dataframe(lst)))
             return _cmds
 
@@ -299,6 +329,11 @@ class SpoldToNIS:
                 issues.append(Issue(itype=IType.INFO, description=f"LCI file '{os.path.basename(found_name)}' read correctly"))
                 files_in_lci_base.remove(found_name)
 
+            # Bring compartment and subcompartment to exchange properties level
+            for exc in lci["exchanges"]:
+                exc["compartment"] = exc["properties"].get("compartment")
+                exc["subcompartment"] = exc["properties"].get("subcompartment")
+
             # Transform Spold file into usable data structures (pd.DataFrame's)
             df, dfi = _lci_to_dataframe(lci)
             if df is None:
@@ -329,23 +364,31 @@ class SpoldToNIS:
                                                                 lci_name=r["name"])
 
             # INTERFACES <- df
-            names = {k: v for k, v in zip(df['name'].str.lower().values, df['name'].values)}
-            tmp = df.groupby([df['name'].str.lower()]).sum()  # Acumulate (sum) repeated exchange names
 
             # Find main output
-            main_output, main_output_is_output = _find_main_output(tmp)
+            main_output, main_output_is_output = _find_main_output(df)
 
-            # Add interfaces, output interface first
-            i_name = get_nis_name(names.get(main_output, main_output))
+            # Add output interface first
+            i_name = get_nis_name(main_output)
             interfaces[(nis_name, i_name)] = dict(value=1, relative_to="", is_output=main_output_is_output)
-            for idx, r in tmp.iterrows():
-                i_name = get_nis_name(names[idx])
+            # Add rest of interfaces
+            for idx, r in df.iterrows():
+                compartment = r["compartment"]
+                subcompartment = r["subcompartment"]
+                i_name = get_nis_name(r["name"])
+                it_name = i_name
+                if compartment:
+                    i_name += f"_{get_nis_name(compartment)}"
+                if subcompartment:
+                    i_name += f"_{get_nis_name(subcompartment)}"
                 if (nis_name, i_name) not in interfaces:
                     relative_to = main_output if i_name != main_output else ""
                     # value = r["amount"] if relative_to != "" else ""
-                    interfaces[(nis_name, i_name)] = dict(value=r["amount"],
-                                                        relative_to=relative_to,
-                                                        is_output=i_name == main_output)
+                    interfaces[(nis_name, it_name, i_name)] = dict(value=r["amount"],
+                                                                   relative_to=relative_to,
+                                                                   compartment=compartment,
+                                                                   subcompartment=subcompartment,
+                                                                   is_output=i_name == main_output)
         for f in files_in_lci_base:
             issues.append(Issue(itype=IType.WARNING, description=f"File '{os.path.basename(f)}' not used"))
 
