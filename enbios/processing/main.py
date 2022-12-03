@@ -896,7 +896,7 @@ def process_fragment(base_serial_state: bytes,
                     orientation = i.attributes.get("orientation", "")
                     v = q.value
                     # TODO Static: does not depend on scenario or time, avoid inserting repeatedly
-                    interfaces.append([proc_name, i.name, "", "", "", orientation, "", "", "", "", v,
+                    interfaces.append([proc_name, i.taxon.name, i.name, "", "", orientation, "", "", "", "", v,
                                        "", relative_to, "", "", "", "", "Year", "Ecoinvent", "", ""])
 
     def _prepare_iamc_dataframe_fragment(state: State, indicators: pd.DataFrame, iamc_codes: Dict[str, str], metadata):
